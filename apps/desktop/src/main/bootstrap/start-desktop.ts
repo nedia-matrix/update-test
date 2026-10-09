@@ -3,6 +3,7 @@ import { registerPreferencesIpc } from "../preferences/register-preferences-ipc.
 import {
   assertUpdateSourceIdle,
   updateSourceChanged,
+  recordApplicationUpdateStartup,
 } from "../updates/electron-application-update.js";
 import { app, dialog } from "electron";
 
@@ -43,12 +44,13 @@ if (!hasSingleInstanceLock) {
 }
 
 void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
-  .then(() => {
+  .then(async () => {
     if (!hasSingleInstanceLock) return;
     registerPreferencesIpc(desktopPreferences(), {
       assertIdle: assertUpdateSourceIdle,
       changed: updateSourceChanged,
     });
+    await recordApplicationUpdateStartup(false);
     desktopRuntime = new DesktopRuntime();
     desktopRuntime.start();
     const initialOpenUrl = findNediaMatrixOpenUrl(process.argv);

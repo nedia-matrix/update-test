@@ -31,6 +31,7 @@ export const ipcChannels = {
   applicationUpdateChanged: "matrix:application:update-changed",
   downloadApplicationUpdate: "matrix:application:download-update",
   cancelApplicationUpdateDownload: "matrix:application:cancel-update-download",
+  installApplicationUpdate: "matrix:application:install-update",
   showApplicationUpdateFile: "matrix:application:show-update-file",
   openApplicationUpdateDownload: "matrix:application:open-update-download",
   getLocalRuntimeStatus: "matrix:runtime:status",

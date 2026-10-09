@@ -5,6 +5,12 @@ import { ipcChannels } from "../../bridge/channels.js";
 import { UpdateController } from "./update-controller.js";
 import { desktopPreferences } from "../preferences/desktop-preferences.js";
 import { parseUpdateSource } from "./update-source.js";
+import {
+  prepareInstallation,
+  recordUpdateStartup,
+  type InstallContext,
+  type PreparedInstallation,
+} from "./update-installation.js";
 import { findProtocolUpdate } from "./find-protocol-update.js";
 
 import { findLatestRelease, releasePageUrl } from "./application-update.js";
@@ -13,6 +19,39 @@ declare const __NEDIA_UPDATE_PUBLIC_KEYS__: Record<string, string>;
 declare const __NEDIA_UPDATE_DISTRIBUTION__: string;
 let controller: UpdateController | undefined;
 let revision = 0;
+let installationLifecycle:
+  | {
+      acquire(): () => void;
+      finish(prepared: PreparedInstallation): Promise<void>;
+    }
+  | undefined;
+export function configureUpdateInstallation(
+  lifecycle: NonNullable<typeof installationLifecycle>,
+): void {
+  installationLifecycle = lifecycle;
+}
+export function installationContext(): InstallContext {
+  return {
+    packaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    distribution:
+      typeof __NEDIA_UPDATE_DISTRIBUTION__ === "string"
+        ? __NEDIA_UPDATE_DISTRIBUTION__
+        : "unsupported",
+    executable: process.execPath,
+    portableExecutable: process.env.PORTABLE_EXECUTABLE_FILE,
+    portableDirectory: process.env.PORTABLE_EXECUTABLE_DIR,
+    resources: process.resourcesPath,
+    userData: app.getPath("userData"),
+    currentVersion: app.getVersion(),
+  };
+}
+export const recordApplicationUpdateStartup = (completed: boolean) =>
+  app.isPackaged
+    ? recordUpdateStartup(installationContext(), completed)
+    : Promise.resolve();
+export const installApplicationUpdate = () => updates().install();
 
 export const assertUpdateSourceIdle = () => controller?.assertCanChangeSource();
 export function updateSourceChanged(): void {
@@ -46,6 +85,25 @@ function updates(): UpdateController {
           : "unsupported",
     },
     keys,
+    install: app.isPackaged
+      ? async (update, installing) => {
+          if (!installationLifecycle) throw new Error("安装生命周期尚未准备好");
+          const release = installationLifecycle.acquire();
+          let prepared: PreparedInstallation | undefined;
+          let cleanupStarted = false;
+          try {
+            prepared = await prepareInstallation(installationContext(), update);
+            cleanupStarted = true;
+            installing();
+            await installationLifecycle.finish(prepared);
+          } catch (error) {
+            await prepared?.cancel();
+            throw error;
+          } finally {
+            if (!cleanupStarted) release();
+          }
+        }
+      : undefined,
     cacheDirectory: join(app.getPath("userData"), "application-updates"),
     findLatestRelease: () =>
       source.kind === "github"

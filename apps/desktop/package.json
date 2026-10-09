@@ -1,7 +1,7 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -81,6 +81,12 @@
             "x64"
           ]
         }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/update-helper/nedia-update-helper",
+          "to": "update-helper/nedia-update-helper"
+        }
       ]
     },
     "win": {
@@ -91,6 +97,12 @@
           "arch": [
             "x64"
           ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/update-helper/nedia-update-helper.exe",
+          "to": "update-helper/nedia-update-helper.exe"
         }
       ]
     },

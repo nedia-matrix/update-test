@@ -24,6 +24,16 @@ export class ApplicationCommandGate {
     });
   }
 
+  /** Synchronous check-and-freeze: there is no await in which a new task can enter. */
+  freezeForUpdate(): () => void {
+    if (this.stopping || this.active.size > 0)
+      throw new Error("存在活动任务，请先完成发布或同步后再安装");
+    this.stopping = true;
+    return () => {
+      this.stopping = false;
+    };
+  }
+
   async stop(): Promise<void> {
     this.stopping = true;
     await Promise.allSettled([...this.active]);

@@ -46,6 +46,7 @@ function createDependencies() {
         }),
         download: async () => undefined,
         cancelDownload: async () => undefined,
+        install: async () => undefined,
         showFile: async () => undefined,
         check: async () => ({
           status: "up-to-date" as const,

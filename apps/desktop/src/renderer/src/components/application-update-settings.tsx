@@ -66,7 +66,9 @@ export function ApplicationUpdateSettings() {
   const busy =
     state?.phase === "checking" ||
     state?.phase === "downloading" ||
-    state?.phase === "verifying";
+    state?.phase === "verifying" ||
+    state?.phase === "preparing-install" ||
+    state?.phase === "installing";
   const sourceChanged = sourceUrl.trim() !== savedSourceUrl;
   const sourceCanReset =
     sourceUrl.trim() !== DEFAULT_UPDATE_SOURCE_URL ||
@@ -147,24 +149,27 @@ export function ApplicationUpdateSettings() {
                   ? "检查新版本"
                   : "重新检查"}
             </button>
-            {state?.latestVersion && !busy && state.phase !== "ready" && (
-              <button
-                class="compact-button"
-                type="button"
-                disabled={actionPending}
-                onClick={() =>
-                  void run(
-                    state.downloadAvailable
-                      ? () => window.matrix.downloadApplicationUpdate()
-                      : openPage,
-                  )
-                }
-              >
-                {state.downloadAvailable && state.error?.stage === "download"
-                  ? "重新下载"
-                  : `下载 v${state.latestVersion}`}
-              </button>
-            )}
+            {state?.latestVersion &&
+              !busy &&
+              state.phase !== "ready" &&
+              state.error?.stage !== "install" && (
+                <button
+                  class="compact-button"
+                  type="button"
+                  disabled={actionPending}
+                  onClick={() =>
+                    void run(
+                      state.downloadAvailable
+                        ? () => window.matrix.downloadApplicationUpdate()
+                        : openPage,
+                    )
+                  }
+                >
+                  {state.downloadAvailable && state.error?.stage === "download"
+                    ? "重新下载"
+                    : `下载 v${state.latestVersion}`}
+                </button>
+              )}
             {state?.phase === "downloading" && (
               <button
                 class="secondary-button compact-button"
@@ -180,7 +185,20 @@ export function ApplicationUpdateSettings() {
                 取消下载
               </button>
             )}
-            {state?.phase === "ready" && (
+            {state?.phase === "ready" && state.installAction && (
+              <button
+                class="compact-button"
+                type="button"
+                disabled={actionPending}
+                onClick={() =>
+                  void run(() => window.matrix.installApplicationUpdate())
+                }
+              >
+                {state.installAction === "exit" ? "退出并安装" : "重启并更新"}
+              </button>
+            )}
+            {(state?.phase === "ready" ||
+              state?.error?.stage === "install") && (
               <button
                 class="compact-button"
                 type="button"

@@ -63,6 +63,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Set up Go for the standalone update helper
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/desktop/installer/go.mod
+          cache: false
+
+      - name: Test update helper
+        working-directory: apps/desktop/installer
+        run: go test ./...
+
       - name: Package application
         run: ${{ matrix.package_command }}
         env:

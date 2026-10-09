@@ -65,15 +65,30 @@ export interface OpenApplicationUpdateDownloadRequest {
 /** Main owns paths and URLs; the Renderer receives only presentation data. */
 export interface ApplicationUpdateState {
   revision: number;
-  phase: "idle" | "checking" | "up-to-date" | "available" | "downloading" | "verifying" | "ready" | "failed";
+  phase:
+    | "idle"
+    | "checking"
+    | "up-to-date"
+    | "available"
+    | "downloading"
+    | "verifying"
+    | "ready"
+    | "preparing-install"
+    | "installing"
+    | "failed";
   currentVersion: string;
   latestVersion?: string;
   taskId?: string;
   downloadAvailable: boolean;
+  installAction?: "restart" | "exit";
   receivedBytes: number;
   totalBytes: number;
   message?: string;
-  error?: { stage: "check" | "download"; retryable: boolean; message: string };
+  error?: {
+    stage: "check" | "download" | "install";
+    retryable: boolean;
+    message: string;
+  };
 }
 
 export interface FindDiagnosticTraceRequest {

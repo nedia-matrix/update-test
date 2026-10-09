@@ -50,6 +50,20 @@ async function provenance(distribution, names) {
   }
 }
 
+const helperBuildEnvironment = { ...process.env };
+delete helperBuildEnvironment.NEDIA_UPDATE_PRIVATE_KEY;
+delete helperBuildEnvironment.NEDIA_UPDATE_PRIVATE_KEY_FILE;
+const helperBuild = spawnSync(
+  process.execPath,
+  [
+    join(import.meta.dirname, "build-update-helper.mjs"),
+    mode === "mac" ? "mac" : "win",
+  ],
+  { stdio: "inherit", env: helperBuildEnvironment },
+);
+if (helperBuild.error) throw helperBuild.error;
+if (helperBuild.status !== 0) throw new Error("更新辅助程序构建失败");
+
 if (mode === "mac") {
   run(["run", "build"], "app-zip");
   run(["exec", "electron-builder", "--mac", "--publish", "never"], "app-zip");

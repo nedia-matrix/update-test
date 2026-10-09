@@ -225,3 +225,78 @@ describe("application update lifecycle", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+describe("user requested installation", () => {
+  it("does not install until requested; merges requests and pins source/package during preflight", async () => {
+    let finish!: () => void;
+    const installer = vi.fn(async (_update, installing) => {
+      installing();
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const { controller, fixture } = await setup({ install: installer });
+    await controller.check();
+    await controller.download();
+    expect(installer).not.toHaveBeenCalled();
+    expect(controller.snapshot().installAction).toBe("restart");
+    const installation = controller.install();
+    expect(controller.install()).toBe(installation);
+    expect(() => controller.resetSource()).toThrow("安装");
+    await expect(controller.check()).rejects.toThrow("不能重新检查");
+    await expect(controller.download()).rejects.toThrow();
+    await vi.waitFor(() => expect(installer).toHaveBeenCalledOnce());
+    expect(installer.mock.calls[0]![0]).toMatchObject({
+      version: "0.4.0",
+      artifact: fixture.manifest.artifacts[0],
+    });
+    expect(controller.snapshot().phase).toBe("installing");
+    finish();
+    await installation;
+  });
+  it("rejects a mutated cache before starting the helper", async () => {
+    const installer = vi.fn();
+    const { controller } = await setup({ install: installer });
+    await controller.check();
+    await controller.download();
+    await writeFile(await controller.verifiedDownloadedFile(), "changed");
+    await expect(controller.install()).rejects.toThrow("缓存包已变动");
+    expect(installer).not.toHaveBeenCalled();
+    expect(controller.snapshot().error?.stage).toBe("download");
+  });
+  it("keeps the verified package retryable after preflight fails", async () => {
+    const installer = vi.fn(async () => {
+      throw new Error("活动发布阻止安装");
+    });
+    const { controller } = await setup({ install: installer });
+    await controller.check();
+    await controller.download();
+    await expect(controller.install()).rejects.toThrow("活动发布");
+    expect(controller.snapshot()).toMatchObject({
+      phase: "ready",
+      error: { stage: "install", retryable: true },
+    });
+    await expect(controller.verifiedDownloadedFile()).resolves.toBeTypeOf(
+      "string",
+    );
+  });
+  it("does not offer a second installation after cleanup fails", async () => {
+    const { controller } = await setup({
+      install: async (_update, installing) => {
+        installing();
+        throw new Error("清理失败，请重启");
+      },
+    });
+    await controller.check();
+    await controller.download();
+    await expect(controller.install()).rejects.toThrow("清理失败");
+    expect(controller.snapshot()).toMatchObject({
+      phase: "failed",
+      error: { stage: "install", retryable: false },
+    });
+    await expect(controller.install()).rejects.toThrow("尚无可安装");
+    await expect(controller.verifiedDownloadedFile()).resolves.toBeTypeOf(
+      "string",
+    );
+  });
+});

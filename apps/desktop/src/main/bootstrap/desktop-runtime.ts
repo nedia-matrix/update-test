@@ -50,10 +50,14 @@ import {
   downloadApplicationUpdate,
   cancelApplicationUpdateDownload,
   showApplicationUpdateFile,
+  installApplicationUpdate,
+  configureUpdateInstallation,
+  recordApplicationUpdateStartup,
   openApplicationUpdateDownload,
 } from "../updates/electron-application-update.js";
 import { registerApplicationUpdateIpcHandler } from "../updates/register-application-update-ipc.js";
 import { configuredUpdateSource } from "../updates/application-update.js";
+import { completeUpdateExit } from "./update-exit.js";
 import { ApplicationLifecycle } from "./application-lifecycle.js";
 import { shutdownDesktopRuntime, waitForShutdown } from "./runtime-cleanup.js";
 
@@ -72,26 +76,37 @@ export class DesktopRuntime {
   private readonly metadata: ReturnType<typeof openDesktopMetadata>;
   private readonly accountPublications = new AccountPublicationLock();
   private readonly mediaSelections = new MediaSelectionStore();
-  private readonly mainWindow = new ElectronMainWindow((error) => {
-    const trace = this.diagnostics.start({
-      operation: "application.window_load",
-      requestId: randomUUID(),
-    });
-    trace.report({
-      component: "application",
-      event: "application.window_load.failed",
-      level: "error",
-      details: {
-        code: "WINDOW_LOAD_FAILED",
-        errorName: error instanceof Error ? error.name : "UnknownError",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to load desktop window",
-      },
-    });
-    trace.finish({ outcome: "failed" });
-  });
+  private readonly mainWindow = new ElectronMainWindow(
+    (error) => {
+      const trace = this.diagnostics.start({
+        operation: "application.window_load",
+        requestId: randomUUID(),
+      });
+      trace.report({
+        component: "application",
+        event: "application.window_load.failed",
+        level: "error",
+        details: {
+          code: "WINDOW_LOAD_FAILED",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unable to load desktop window",
+        },
+      });
+      trace.finish({ outcome: "failed" });
+    },
+    () => {
+      if (this.startupStage === "completed")
+        void recordApplicationUpdateStartup(true).catch((error: unknown) => {
+          console.error(
+            "Failed to confirm update startup; installation evidence was retained",
+            error,
+          );
+        });
+    },
+  );
   private readonly publicationRepository: PublicationRepository;
   private readonly publicationObservationInbox: PublicationObservationInbox;
   private readonly publishing: PublishingService;
@@ -113,6 +128,8 @@ export class DesktopRuntime {
     { trace: DiagnosticTrace; attempt: number }
   >();
   private quitAllowed = false;
+  private updateInstallInProgress = false;
+  private updateCleanupFailed = false;
   private startupStage = "initialize_services";
 
   constructor() {
@@ -407,6 +424,7 @@ export class DesktopRuntime {
         state: getApplicationUpdateState,
         cancelDownload: cancelApplicationUpdateDownload,
         showFile: showApplicationUpdateFile,
+        install: installApplicationUpdate,
         download: async () => {
           const trace = this.diagnostics.start({
             operation: "application.update",
@@ -705,6 +723,59 @@ export class DesktopRuntime {
       ...dependencies,
       application: this.application,
     });
+    configureUpdateInstallation({
+      acquire: () => {
+        if (
+          this.updateInstallInProgress ||
+          this.lifecycle.requestWindowOpen() !== "open-now" ||
+          this.accountPublications.hasAnyActive() ||
+          this.publishObservations.hasActive()
+        )
+          throw new Error("存在活动发布或正在退出，请先完成任务再安装");
+        this.publicationObservations.retryPending();
+        if (this.publicationObservations.pendingCount > 0)
+          throw new Error("发布结果尚未持久化，请稍后重试安装");
+        const resume = this.application!.freezeForUpdate();
+        this.updateInstallInProgress = true;
+        return () => {
+          this.updateInstallInProgress = false;
+          resume();
+        };
+      },
+      finish: async (prepared) => {
+        if (!this.lifecycle.beginShutdown())
+          throw new Error("应用已进入退出流程");
+        if (this.publicationRetryTimer)
+          clearInterval(this.publicationRetryTimer);
+        try {
+          await completeUpdateExit(prepared, {
+            cleanup: async () => {
+              await this.localRuntimeServer?.stop();
+              await this.publishObservations.stopAll();
+              this.publicationObservations.retryPending();
+              if (this.publicationObservations.pendingCount > 0)
+                throw new Error("发布结果持久化失败");
+              this.mediaSelections.clear();
+              await this.browserSessions.closeAll();
+              await this.diagnostics.flush();
+              await this.diagnostics.close();
+            },
+            closeDatabase: () => this.metadata.database.close(),
+            exit: () => {
+              this.applicationTray?.destroy();
+              this.quitAllowed = true;
+              app.exit(0);
+            },
+          });
+        } catch (error) {
+          await prepared.cancel();
+          this.updateCleanupFailed = true;
+          throw new Error(
+            `${error instanceof Error ? error.message : "更新退出失败"}；安装已停止，业务入口已关闭，请退出并重新启动应用。`,
+          );
+        }
+      },
+    });
     registerApplicationUpdateIpcHandler(this.application);
     registerDiagnosticIpc({
       logDirectory: path.join(app.getPath("userData"), "diagnostics"),
@@ -784,6 +855,12 @@ export class DesktopRuntime {
   }
 
   requestQuit(): void {
+    if (this.updateCleanupFailed) {
+      // No installation permit was submitted. Exit without closing a possibly busy database.
+      app.exit(1);
+      return;
+    }
+    if (this.updateInstallInProgress) return;
     if (!this.lifecycle.beginShutdown()) return;
     // Abort network work before draining the application command gate.
     void cancelApplicationUpdateDownload();

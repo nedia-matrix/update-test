@@ -66,6 +66,7 @@ export interface UpdateUseCases {
   state(): ApplicationUpdateState;
   download(): Promise<void>;
   cancelDownload(): Promise<void>;
+  install(): Promise<void>;
   showFile(): Promise<void>;
   openDownload(request: OpenApplicationUpdateDownloadRequest): Promise<void>;
 }
@@ -188,7 +189,8 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     this.platforms = dependencies.platforms;
     this.platformSummaries = () => this.platforms.list().map(toPlatformSummary);
     this.runtime = this.commands.guard(dependencies.runtime);
-    this.updates = this.commands.guard(dependencies.updates);
+    // Update commands own their mutex; tracking installation here would deadlock shutdown.
+    this.updates = dependencies.updates;
     this.accountApplication = new AccountService({
       platforms: dependencies.platforms,
       accountStore: dependencies.accountStore,
@@ -447,6 +449,10 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       get: this.publicationPlatformContent,
     }).get;
     this.platformContents = this.commands.guard(this.platformContents);
+  }
+
+  freezeForUpdate(): () => void {
+    return this.commands.freezeForUpdate();
   }
 
   stopCommands(): Promise<void> {

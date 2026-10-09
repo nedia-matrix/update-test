@@ -55,9 +55,12 @@ export interface MatrixDesktopApi {
   ): Promise<DesktopPreferences>;
   checkForApplicationUpdate(): Promise<ApplicationUpdateCheckResult>;
   getApplicationUpdateState(): Promise<ApplicationUpdateState>;
-  onApplicationUpdateChanged(listener: (state: ApplicationUpdateState) => void): () => void;
+  onApplicationUpdateChanged(
+    listener: (state: ApplicationUpdateState) => void,
+  ): () => void;
   downloadApplicationUpdate(): Promise<void>;
   cancelApplicationUpdateDownload(): Promise<void>;
+  installApplicationUpdate(): Promise<void>;
   showApplicationUpdateFile(): Promise<void>;
   openApplicationUpdateDownload(
     request: OpenApplicationUpdateDownloadRequest,

@@ -176,6 +176,10 @@ export class PublishObservationManager {
     return hosted;
   }
 
+  hasActive(): boolean {
+    return this.observations.size > 0;
+  }
+
   async stop(accountId: string): Promise<void> {
     await this.observations.get(accountId)?.interrupt();
   }

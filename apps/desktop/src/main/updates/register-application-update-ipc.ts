@@ -16,6 +16,9 @@ export function registerApplicationUpdateIpcHandler(
   ipcMain.handle(ipcChannels.cancelApplicationUpdateDownload, () =>
     application.updates.cancelDownload(),
   );
+  ipcMain.handle(ipcChannels.installApplicationUpdate, () =>
+    application.updates.install(),
+  );
   ipcMain.handle(ipcChannels.showApplicationUpdateFile, () =>
     application.updates.showFile(),
   );

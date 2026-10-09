@@ -30,14 +30,24 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.getPreferences, request),
   updatePreferences: (request) =>
     ipcRenderer.invoke(ipcChannels.updatePreferences, request),
-  getApplicationUpdateState: () => ipcRenderer.invoke(ipcChannels.getApplicationUpdateState),
-  downloadApplicationUpdate: () => ipcRenderer.invoke(ipcChannels.downloadApplicationUpdate),
-  cancelApplicationUpdateDownload: () => ipcRenderer.invoke(ipcChannels.cancelApplicationUpdateDownload),
-  showApplicationUpdateFile: () => ipcRenderer.invoke(ipcChannels.showApplicationUpdateFile),
+  getApplicationUpdateState: () =>
+    ipcRenderer.invoke(ipcChannels.getApplicationUpdateState),
+  downloadApplicationUpdate: () =>
+    ipcRenderer.invoke(ipcChannels.downloadApplicationUpdate),
+  cancelApplicationUpdateDownload: () =>
+    ipcRenderer.invoke(ipcChannels.cancelApplicationUpdateDownload),
+  installApplicationUpdate: () =>
+    ipcRenderer.invoke(ipcChannels.installApplicationUpdate),
+  showApplicationUpdateFile: () =>
+    ipcRenderer.invoke(ipcChannels.showApplicationUpdateFile),
   onApplicationUpdateChanged: (listener) => {
-    const handler = (_event: Electron.IpcRendererEvent, state: ApplicationUpdateState) => listener(state);
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: ApplicationUpdateState,
+    ) => listener(state);
     ipcRenderer.on(ipcChannels.applicationUpdateChanged, handler);
-    return () => ipcRenderer.removeListener(ipcChannels.applicationUpdateChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(ipcChannels.applicationUpdateChanged, handler);
   },
   checkForApplicationUpdate: () =>
     ipcRenderer.invoke(ipcChannels.checkForApplicationUpdate),

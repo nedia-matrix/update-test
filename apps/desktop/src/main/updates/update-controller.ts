@@ -36,6 +36,10 @@ export interface UpdateControllerDependencies {
   sourceIdentity?: string;
   /** Injectable short limits in tests; production has a bounded overall deadline. */
   downloadTimeoutMs?: number;
+  install?(
+    update: { file: string; version: string; artifact: UpdateArtifact },
+    installing: () => void,
+  ): Promise<void>;
   onChange?(state: ApplicationUpdateState): void;
 }
 
@@ -51,6 +55,7 @@ export class UpdateController {
   private selected: SelectedDownload | undefined;
   private checkInFlight: Promise<ApplicationUpdateCheckResult> | undefined;
   private downloadInFlight: Promise<void> | undefined;
+  private installInFlight: Promise<void> | undefined;
   private downloadAbort: AbortController | undefined;
 
   constructor(private readonly dependencies: UpdateControllerDependencies) {
@@ -59,6 +64,7 @@ export class UpdateController {
       phase: "idle",
       currentVersion: dependencies.currentVersion,
       downloadAvailable: false,
+      installAction: undefined,
       receivedBytes: 0,
       totalBytes: 0,
     };
@@ -75,8 +81,8 @@ export class UpdateController {
   }
 
   assertCanChangeSource(): void {
-    if (this.checkInFlight || this.downloadInFlight)
-      throw new Error("检查、下载或校验期间不能更改更新源");
+    if (this.checkInFlight || this.downloadInFlight || this.installInFlight)
+      throw new Error("检查、下载、校验或安装期间不能更改更新源");
   }
 
   resetSource(): void {
@@ -89,9 +95,16 @@ export class UpdateController {
       error: undefined,
       message: undefined,
       downloadAvailable: false,
+      installAction: undefined,
       receivedBytes: 0,
       totalBytes: 0,
     });
+  }
+
+  private readyMessage(): string {
+    return this.dependencies.install
+      ? "下载已校验。可以主动安装更新，或打开文件位置手动安装。"
+      : "下载已校验。请打开文件位置，退出应用后手动安装。";
   }
 
   private change(patch: Partial<ApplicationUpdateState>): void {
@@ -101,9 +114,13 @@ export class UpdateController {
 
   check(): Promise<ApplicationUpdateCheckResult> {
     if (this.checkInFlight) return this.checkInFlight;
-    if (this.downloadInFlight || this.state.phase === "ready") {
+    if (
+      this.downloadInFlight ||
+      this.installInFlight ||
+      this.state.phase === "ready"
+    ) {
       return Promise.reject(
-        new Error("请先完成当前下载的手动安装；下载中不能重新检查"),
+        new Error("请先处理当前更新包；下载或安装中不能重新检查"),
       );
     }
     this.selected = undefined;
@@ -114,6 +131,7 @@ export class UpdateController {
       error: undefined,
       message: undefined,
       downloadAvailable: false,
+      installAction: undefined,
       receivedBytes: 0,
       totalBytes: 0,
     });
@@ -217,11 +235,14 @@ export class UpdateController {
         this.change({
           phase: cached ? "ready" : "available",
           downloadAvailable: true,
+          installAction: this.dependencies.install
+            ? target.distribution === "nsis"
+              ? "exit"
+              : "restart"
+            : undefined,
           totalBytes: artifact.size,
           receivedBytes: cached ? artifact.size : 0,
-          message: cached
-            ? "下载已校验。此阶段请打开文件位置，退出应用后手动安装。"
-            : undefined,
+          message: cached ? this.readyMessage() : undefined,
         });
       }
     }
@@ -234,7 +255,7 @@ export class UpdateController {
 
   download(): Promise<void> {
     if (this.downloadInFlight) return this.downloadInFlight;
-    if (this.checkInFlight || !this.selected)
+    if (this.checkInFlight || this.installInFlight || !this.selected)
       return Promise.reject(new Error("请先检查并确认存在可信更新包"));
     if (this.state.phase === "ready") return Promise.resolve();
     const selected = this.selected;
@@ -282,6 +303,70 @@ export class UpdateController {
   async cancel(): Promise<void> {
     this.downloadAbort?.abort();
     await this.downloadInFlight?.catch(() => undefined);
+  }
+
+  install(): Promise<void> {
+    if (this.installInFlight) return this.installInFlight;
+    if (
+      this.checkInFlight ||
+      this.downloadInFlight ||
+      this.state.phase !== "ready" ||
+      !this.selected ||
+      !this.dependencies.install
+    )
+      return Promise.reject(new Error("尚无可安装的已校验更新包"));
+    const selected = this.selected;
+    const version = this.state.latestVersion!;
+    this.change({
+      phase: "preparing-install",
+      error: undefined,
+      message: "正在检查安装条件…",
+    });
+    this.installInFlight = Promise.resolve()
+      .then(async () => {
+        if (
+          !(await this.verifyFile(selected.file, selected.artifact).catch(
+            () => false,
+          ))
+        ) {
+          this.change({
+            phase: "failed",
+            installAction: undefined,
+            error: {
+              stage: "download",
+              retryable: true,
+              message: "缓存包已变动，请重新下载",
+            },
+          });
+          throw new Error("缓存包已变动，请重新下载");
+        }
+        await this.dependencies.install!(
+          { file: selected.file, version, artifact: selected.artifact },
+          () =>
+            this.change({
+              phase: "installing",
+              message: "正在退出并交接安装…",
+            }),
+        );
+      })
+      .catch((error: unknown) => {
+        if (this.state.error?.stage !== "download") {
+          const cleanupStarted = this.state.phase === "installing";
+          this.change({
+            phase: cleanupStarted ? "failed" : "ready",
+            error: {
+              stage: "install",
+              retryable: !cleanupStarted,
+              message: userError(error),
+            },
+          });
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.installInFlight = undefined;
+      });
+    return this.installInFlight;
   }
 
   private async performDownload(
@@ -344,7 +429,7 @@ export class UpdateController {
       await rename(temporary, file);
       this.change({
         phase: "ready",
-        message: "下载已校验。此阶段请打开文件位置，退出应用后手动安装。",
+        message: this.readyMessage(),
       });
     } finally {
       await rm(temporary, { force: true });
@@ -364,7 +449,10 @@ export class UpdateController {
   }
 
   async verifiedDownloadedFile(): Promise<string> {
-    if (this.state.phase !== "ready" || !this.selected)
+    if (
+      (this.state.phase !== "ready" && this.state.error?.stage !== "install") ||
+      !this.selected
+    )
       throw new Error("尚无已校验的更新包");
     if (
       !(await this.verifyFile(this.selected.file, this.selected.artifact).catch(
