@@ -67,20 +67,33 @@ export async function fetchUpdateAsset(
 export async function readBoundedResponse(
   response: Response,
   limit: number,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
+  signal?.throwIfAborted();
   if (!response.body) throw new Error("更新附件没有内容");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
+  // Cancel the body too: receiving headers does not mean a metadata request has completed.
+  const abort = () => {
+    void reader.cancel(signal?.reason).catch(() => undefined);
+  };
+  signal?.addEventListener("abort", abort, { once: true });
   try {
     for (;;) {
+      signal?.throwIfAborted();
       const { value, done } = await reader.read();
+      signal?.throwIfAborted();
       if (done) break;
       size += value.length;
       if (size > limit) throw new Error("更新元数据超过大小限制");
       chunks.push(value);
     }
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
   } finally {
+    signal?.removeEventListener("abort", abort);
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }

@@ -77,3 +77,32 @@ it("cancels while DNS resolution is still pending", async () => {
   await expect(pending).rejects.toThrow();
   expect(mocks.request).not.toHaveBeenCalled();
 });
+
+it("preserves timeout rather than exposing Node's generic request AbortError", async () => {
+  const abort = new AbortController();
+  const reason = new DOMException("request timed out", "TimeoutError");
+  mocks.request.mockImplementation((_url, options) => {
+    const req = new EventEmitter() as EventEmitter & { end(): void };
+    req.end = () => {
+      options.signal.addEventListener(
+        "abort",
+        () =>
+          req.emit(
+            "error",
+            Object.assign(new Error("The operation was aborted"), {
+              name: "AbortError",
+              cause: reason,
+            }),
+          ),
+        { once: true },
+      );
+      abort.abort(reason);
+    };
+    return req;
+  });
+  await expect(
+    publicUpdateFetch("https://updates.example.com/package.zip", {
+      signal: abort.signal,
+    }),
+  ).rejects.toBe(reason);
+});

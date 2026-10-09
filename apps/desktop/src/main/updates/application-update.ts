@@ -92,10 +92,11 @@ export async function findLatestRelease(
 ): Promise<ApplicationRelease> {
   if (source !== "github") throw new Error("协议更新源需读取受信清单");
   const configuration = UPDATE_SOURCES.github;
+  const signal = AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS);
   const response = await fetchUpdateAsset(
     `https://api.github.com/repos/${repository}/releases/latest`,
     "github",
-    AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+    signal,
     fetcher,
     { ...configuration.headers },
   );
@@ -104,9 +105,9 @@ export async function findLatestRelease(
   }
 
   const payload: unknown = JSON.parse(
-    Buffer.from(await readBoundedResponse(response, 512 * 1024)).toString(
-      "utf8",
-    ),
+    Buffer.from(
+      await readBoundedResponse(response, 512 * 1024, signal),
+    ).toString("utf8"),
   );
   if (
     typeof payload === "object" &&

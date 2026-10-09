@@ -158,7 +158,9 @@ export const publicUpdateFetch: typeof fetch = async (input, init = {}) => {
             reject(new Error("不支持的更新响应编码"));
             return;
           }
-          response.on("error", (error) => decoder.destroy(error));
+          response.on("error", (error) =>
+            decoder.destroy(signal.aborted ? signal.reason : error),
+          );
           body = response.pipe(decoder);
           decoder.on("close", () => response.destroy());
           responseHeaders.delete("content-length");
@@ -176,7 +178,8 @@ export const publicUpdateFetch: typeof fetch = async (input, init = {}) => {
           );
       },
     );
-    req.on("error", reject);
+    // Node wraps AbortSignal.timeout() as AbortError; retain the actual timeout reason.
+    req.on("error", (error) => reject(signal.aborted ? signal.reason : error));
     req.end();
   });
 };

@@ -110,3 +110,19 @@ describe("update network boundaries", () => {
     ).toBe("ok");
   });
 });
+
+it("bounds metadata body reads after headers and preserves the timeout reason", async () => {
+  const cancelled = vi.fn();
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1]));
+    },
+    cancel: cancelled,
+  });
+  const abort = new AbortController();
+  const reason = new DOMException("metadata timed out", "TimeoutError");
+  const pending = readBoundedResponse(new Response(body), 64, abort.signal);
+  abort.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+  expect(cancelled).toHaveBeenCalledOnce();
+});

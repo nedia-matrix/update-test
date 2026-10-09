@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ApplicationUpdateState } from "../../../bridge/contracts.js";
-import { errorMessage } from "../shared.js";
+import { updateErrorMessage } from "../application-update-errors.js";
 import { DEFAULT_UPDATE_SOURCE_URL } from "../../../bridge/update-source.js";
 
 export function ApplicationUpdateSettings() {
@@ -37,14 +37,15 @@ export function ApplicationUpdateSettings() {
       .catch((error: unknown) => {
         if (mounted)
           setActionError(
-            errorMessage(error, "读取更新地址失败，请检查偏好文件"),
+            updateErrorMessage(error, "读取更新地址失败，请检查偏好文件"),
           );
       });
     void window.matrix
       .getApplicationUpdateState()
       .then(accept)
       .catch((error: unknown) => {
-        if (mounted) setActionError(errorMessage(error, "读取更新状态失败"));
+        if (mounted)
+          setActionError(updateErrorMessage(error, "读取更新状态失败"));
       });
     return () => {
       mounted = false;
@@ -53,12 +54,30 @@ export function ApplicationUpdateSettings() {
   }, []);
 
   const run = async (operation: () => Promise<unknown>) => {
+    const previousRevision = state?.revision;
     setActionPending(true);
     setActionError(null);
     try {
       await operation();
     } catch (error) {
-      setActionError(errorMessage(error, "更新操作失败"));
+      // Electron serializes failures with an IPC prefix. Prefer this action's Main status,
+      // without allowing an unrelated, older check failure to hide a preferences error.
+      const snapshot = await window.matrix
+        .getApplicationUpdateState()
+        .catch(() => null);
+      if (snapshot)
+        setState((previous) =>
+          !previous || snapshot.revision >= previous.revision
+            ? snapshot
+            : previous,
+        );
+      setActionError(
+        snapshot?.error &&
+          previousRevision !== undefined &&
+          snapshot.revision > previousRevision
+          ? snapshot.error.message
+          : updateErrorMessage(error, "更新操作失败"),
+      );
     } finally {
       setActionPending(false);
     }
@@ -178,7 +197,7 @@ export function ApplicationUpdateSettings() {
                   void window.matrix
                     .cancelApplicationUpdateDownload()
                     .catch((error: unknown) =>
-                      setActionError(errorMessage(error, "取消下载失败")),
+                      setActionError(updateErrorMessage(error, "取消下载失败")),
                     )
                 }
               >

@@ -193,6 +193,7 @@ export class UpdateController {
             this.dependencies.fetcher,
           ),
           limit,
+          signal,
         );
       const [manifestBytes, signatureBytes] = release.manifest
         ? [new Uint8Array(), new Uint8Array()]

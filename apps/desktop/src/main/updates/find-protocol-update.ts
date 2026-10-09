@@ -14,6 +14,7 @@ export async function findProtocolUpdate(
     readBoundedResponse(
       await fetchUpdateAsset(url, "manifest", signal, fetcher),
       limit,
+      signal,
     );
   // A mutable endpoint can straddle two publishes. Retry once, never downgrade verification.
   for (let attempt = 0; attempt < 2; attempt++) {

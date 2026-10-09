@@ -300,3 +300,27 @@ describe("user requested installation", () => {
     );
   });
 });
+
+it("keeps an interrupted check failed and retryable rather than treating it as up-to-date", async () => {
+  const { controller, dependencies } = await setup({
+    findLatestRelease: vi.fn(async () => {
+      throw new DOMException("The operation was aborted", "AbortError");
+    }),
+  });
+  await expect(controller.check()).rejects.toThrow("aborted");
+  expect(controller.snapshot()).toMatchObject({
+    phase: "failed",
+    error: {
+      stage: "check",
+      retryable: true,
+      message: expect.stringContaining("超时或中断"),
+    },
+  });
+  vi.mocked(dependencies.findLatestRelease).mockResolvedValue({
+    version: "0.3.2",
+  });
+  await expect(controller.check()).resolves.toMatchObject({
+    status: "up-to-date",
+  });
+  expect(controller.snapshot().error).toBeUndefined();
+});
