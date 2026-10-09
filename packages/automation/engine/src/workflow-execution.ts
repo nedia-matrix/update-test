@@ -142,6 +142,7 @@ async function executeStep(
     case "click": {
       const target = await resolve(step.targetId);
       if (step.commitBoundary) {
+        await driver.prepareCommit?.();
         reportTrace(hooks, {
           type: "commit.boundary_reached",
           workflowId,
@@ -166,6 +167,7 @@ async function executeStep(
     case "click-position": {
       const target = await resolve(step.targetId);
       if (step.commitBoundary) {
+        await driver.prepareCommit?.();
         reportTrace(hooks, {
           type: "commit.boundary_reached",
           workflowId,
@@ -205,6 +207,7 @@ async function executeStep(
             reportResolution(hooks, workflowId, stepIndex, lastResolution);
           }
           if (step.commitBoundary) {
+            await driver.prepareCommit?.();
             reportTrace(hooks, {
               type: "commit.boundary_reached",
               workflowId,
@@ -400,6 +403,23 @@ async function createWorkflowFailure(
       type: "evidence.captured",
       workflowId: workflow.id,
       evidenceId: failure.details.evidence.id,
+      capturedAt: failure.details.evidence.capturedAt,
+      reasonCode: "workflow_failure",
+      ...(failure.details.evidence.relativeRef
+        ? { relativeRef: failure.details.evidence.relativeRef }
+        : {}),
+      ...(failure.details.evidence.mimeType
+        ? { mimeType: failure.details.evidence.mimeType }
+        : {}),
+      ...(failure.details.evidence.byteSize === undefined
+        ? {}
+        : { byteSize: failure.details.evidence.byteSize }),
+      ...(failure.details.evidence.width === undefined
+        ? {}
+        : { width: failure.details.evidence.width }),
+      ...(failure.details.evidence.height === undefined
+        ? {}
+        : { height: failure.details.evidence.height }),
     });
   } catch (evidenceError) {
     reportTrace(hooks, {

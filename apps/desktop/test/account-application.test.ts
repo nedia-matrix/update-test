@@ -43,6 +43,38 @@ const accountServiceDefaults = {
 afterEach(() => vi.useRealTimers());
 
 describe("account application", () => {
+  it("finishes a diagnostic trace when the account browser cannot open", async () => {
+    const events: string[] = [];
+    const trace = {
+      traceId: "trace-1",
+      bind: () => undefined,
+      report: ({ event }: { event: string }) => events.push(event),
+      finish: ({ outcome }: { outcome: string }) =>
+        events.push(`finish:${outcome}`),
+    };
+    const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
+      accountStore: memoryAccountStore(new Map([[account.id, account]])),
+      browserSessions: {
+        openForLogin: async () => {
+          throw new Error("browser unavailable");
+        },
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => openedSession(),
+        closeAutomation: async () => undefined,
+        removeProfile: async () => undefined,
+      },
+      diagnostics: { start: () => trace },
+      removeAccountResources: async () => undefined,
+    });
+
+    await expect(
+      application.openAccount({ accountId: account.id }),
+    ).rejects.toThrow("browser unavailable");
+    expect(events).toEqual(["account.browser_open.failed", "finish:failed"]);
+  });
+
   it("resolves and verifies an active account by platform identity", async () => {
     const storedAccount: PlatformAccountSnapshot = {
       ...account,

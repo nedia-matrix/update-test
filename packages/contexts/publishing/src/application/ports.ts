@@ -9,6 +9,9 @@ import type {
 import type {
   PublicationSnapshot,
   PublicationAssetSnapshot,
+  PublicationAttentionRepository,
+  PublicationQuery,
+  PublicationQueryResult,
   StartPreparationResult,
   StartPublicationInput,
 } from "./index.js";
@@ -141,6 +144,7 @@ export interface PublicationLease {
 export interface AccountPublicationPort {
   acquire(accountId: string): PublicationLease | null;
   isActive(accountId: string): boolean;
+  hasAnyActive?(): boolean;
 }
 
 export interface ManagedPublishObservation {
@@ -159,7 +163,7 @@ export interface PublishObservationPort {
     platformId: string;
     monitor: PublishResultMonitor;
     diagnostics?: PublishAutomationDiagnosticTrace;
-    onFinished?: () => void | Promise<void>;
+    onFinished?: (result?: PublishResultEvent) => void | Promise<void>;
   }): ManagedPublishObservation;
 }
 
@@ -183,6 +187,16 @@ export interface PublicationStatePort {
     sequence?: number,
   ): PublicationSnapshot;
   recoverInterrupted(): PublicationSnapshot[];
+}
+
+export interface PublicationQueryPort {
+  query(input: PublicationQuery): {
+    records: PublicationSnapshot[];
+    nextCursor: string | null;
+    counts: PublicationQueryResult["counts"];
+    tabCounts: PublicationQueryResult["tabCounts"];
+    total: number;
+  };
 }
 
 export interface PublishWorkflowInputs {
@@ -248,7 +262,7 @@ export interface PublishAutomationDiagnosticTrace {
 
 export interface PublishAutomationDiagnosticPort {
   start(input: {
-    operation: "publish";
+    operation: "publication.prepare";
     requestId: string;
     accountId: string;
     platformId: string;
@@ -256,11 +270,24 @@ export interface PublishAutomationDiagnosticPort {
 }
 
 export interface PublicationNoticePort {
-  show(notice: {
-    kind: "publish.awaiting_confirmation";
-    accountId: string;
-    publicationId: string;
-  }): void;
+  show(
+    notice:
+      | {
+          kind: "publish.awaiting_confirmation";
+          accountId: string;
+          publicationId: string;
+        }
+      | {
+          kind:
+            | "publish.preparation_failed"
+            | "publish.failed"
+            | "publish.uncertain";
+          accountId: string;
+          publicationId?: string;
+          message?: string;
+          pageAvailable: boolean;
+        },
+  ): void;
 }
 
 export interface PublicationApplicationDependencies {
@@ -272,6 +299,14 @@ export interface PublicationApplicationDependencies {
   accountPublications: AccountPublicationPort;
   observations: PublishObservationPort;
   publishing: PublicationStatePort;
+  query?: PublicationQueryPort;
+  attention?: PublicationAttentionRepository;
+  selection?: {
+    selectedContentId(publicationId: string): string | null;
+    selectContent(publicationId: string, externalContentId: string): void;
+  };
+  hasActivePublication?(publicationId: string): boolean;
+  resolveArchiveAssetPath?(relativePath: string): Promise<string | undefined>;
   verifyAccount(request: {
     accountId: string;
   }): Promise<
@@ -298,11 +333,13 @@ export interface PublicationArchiveRepository {
   list(): PublicationSnapshot[];
   save(record: PublicationSnapshot): void;
   remove(publicationId: string): void;
+  isDeletedRequestId?(requestId: string): boolean;
 }
 
 export interface PublicationArchiveAssetStore {
   list(): Promise<StoredPublicationAsset[]>;
   remove(relativePath: string): Promise<void>;
+  resolvePath?(relativePath: string): Promise<string | undefined>;
 }
 
 export type PublicationAssetInput = Pick<

@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { publicationSnapshot } from "./metadata-validation.js";
 import type { DesktopMetadataDatabase } from "./desktop-metadata-database.js";
 
-export const metadataSchemaVersion = 3;
+export const metadataSchemaVersion = 5;
+
+export interface MetadataMigrationObserver {
+  report(event: string, details?: Readonly<Record<string, unknown>>): void;
+}
 
 export function migrateMetadataSchema(
   database: DesktopMetadataDatabase,
   existed: boolean,
+  observer?: MetadataMigrationObserver,
 ): void {
   const sql = database.connection;
   let version = Number(sql.prepare("PRAGMA user_version").get()?.user_version);
@@ -20,9 +26,14 @@ export function migrateMetadataSchema(
       migrations.some((migration, index) => migration.version !== index + 1)
     )
       throw new Error("Invalid metadata migration history");
+    observer?.report("persistence.sqlite.schema_verified", { version });
     return;
   }
   if (version === 0) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v1",
+      version: 1,
+    });
     // An unversioned database with content is never an import destination.
     if (
       sql
@@ -53,8 +64,13 @@ export function migrateMetadataSchema(
         .run("Initial desktop metadata", new Date().toISOString());
     });
     version = 1;
+    observer?.report("persistence.sqlite.migration_completed", { version });
   }
   if (version === 1) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v2",
+      version: 2,
+    });
     if (existed)
       database.backup(`${database.filename}.before-v2-${randomUUID()}.sqlite`);
     database.transaction(() => {
@@ -81,8 +97,13 @@ export function migrateMetadataSchema(
         );
     });
     version = 2;
+    observer?.report("persistence.sqlite.migration_completed", { version });
   }
   if (version === 2) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v3",
+      version: 3,
+    });
     if (existed)
       database.backup(`${database.filename}.before-v3-${randomUUID()}.sqlite`);
     database.transaction(() => {
@@ -99,5 +120,115 @@ export function migrateMetadataSchema(
           new Date().toISOString(),
         );
     });
+    version = 3;
+    observer?.report("persistence.sqlite.migration_completed", { version: 3 });
   }
+  if (version === 3) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v4",
+      version: 4,
+    });
+    if (existed)
+      database.backup(`${database.filename}.before-v4-${randomUUID()}.sqlite`);
+    database.transaction(() => {
+      sql.exec(`
+        CREATE TABLE publication_attention_resolution (
+          publication_id TEXT PRIMARY KEY REFERENCES publications(id) ON DELETE CASCADE,
+          resolution TEXT NOT NULL CHECK(resolution IN ('acknowledged_failure', 'recreated', 'confirmed_published', 'confirmed_not_published', 'dismissed')),
+          resolved_at TEXT NOT NULL,
+          manual_platform_content_id TEXT
+        ) STRICT;
+        CREATE TABLE publication_attention_history (
+          id INTEGER PRIMARY KEY,
+          publication_id TEXT NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+          resolution TEXT NOT NULL,
+          resolved_at TEXT NOT NULL,
+          manual_platform_content_id TEXT,
+          reopened INTEGER NOT NULL CHECK(reopened IN (0,1))
+        ) STRICT;
+        CREATE INDEX publication_attention_history_publication ON publication_attention_history(publication_id, id);
+        CREATE TABLE publication_query (
+          publication_id TEXT PRIMARY KEY REFERENCES publications(id) ON DELETE CASCADE,
+          platform_id TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          state TEXT NOT NULL,
+          display_group TEXT NOT NULL,
+          title TEXT,
+          body TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX publication_query_updated ON publication_query(updated_at DESC, publication_id DESC);
+        CREATE INDEX publication_query_group_updated ON publication_query(display_group, updated_at DESC, publication_id DESC);
+        CREATE INDEX publication_query_account_updated ON publication_query(account_id, updated_at DESC, publication_id DESC);
+        CREATE INDEX publication_query_platform_updated ON publication_query(platform_id, updated_at DESC, publication_id DESC);
+        PRAGMA user_version=4;
+      `);
+      const rows = sql
+        .prepare("SELECT id, record FROM publications")
+        .all() as Record<string, unknown>[];
+      const insert = sql.prepare(
+        "INSERT INTO publication_query VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      );
+      for (const row of rows) {
+        const record = publicationSnapshot(JSON.parse(String(row.record)));
+        insert.run(
+          record.publication.id,
+          record.publication.platformId,
+          record.publication.accountId,
+          record.publication.state,
+          displayGroupForMigration(record.publication.state),
+          record.contentRevision.title ?? null,
+          record.contentRevision.body,
+          record.createdAt,
+          record.updatedAt,
+        );
+      }
+      sql
+        .prepare("INSERT INTO schema_migrations VALUES (4, ?, ?)")
+        .run(
+          "Add publication task queries and attention history",
+          new Date().toISOString(),
+        );
+    });
+    version = 4;
+    observer?.report("persistence.sqlite.migration_completed", { version });
+  }
+  if (version === 4) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v5",
+      version: 5,
+    });
+    if (existed)
+      database.backup(`${database.filename}.before-v5-${randomUUID()}.sqlite`);
+    database.transaction(() => {
+      sql.exec(`
+        CREATE TABLE publication_selected_contents (
+          publication_id TEXT PRIMARY KEY REFERENCES publications(id) ON DELETE CASCADE,
+          external_content_id TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE publication_deleted_requests (
+          request_id TEXT PRIMARY KEY,
+          deleted_at TEXT NOT NULL
+        ) STRICT;
+        PRAGMA user_version=5;
+      `);
+      sql
+        .prepare("INSERT INTO schema_migrations VALUES (5, ?, ?)")
+        .run(
+          "Add selected publication content and deleted request markers",
+          new Date().toISOString(),
+        );
+    });
+    version = 5;
+    observer?.report("persistence.sqlite.migration_completed", { version });
+  }
+}
+
+function displayGroupForMigration(state: string): string {
+  if (state === "awaiting_confirmation") return "action_required";
+  if (["uncertain", "failed"].includes(state)) return "attention_required";
+  if (state === "published") return "completed";
+  if (["rejected", "cancelled"].includes(state)) return "closed";
+  return "in_progress";
 }

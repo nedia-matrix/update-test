@@ -69,19 +69,50 @@ export interface SessionDetectionPort {
   ): Promise<PlatformSessionDetection>;
 }
 
+export interface AccountDiagnosticEvent {
+  readonly component:
+    "application" | "browser" | "session" | "account" | "resource";
+  readonly event: string;
+  readonly level?: "debug" | "info" | "warn" | "error";
+  readonly details?: Readonly<Record<string, unknown>>;
+}
+
+export interface AccountDiagnosticTrace {
+  readonly traceId: string;
+  bind(binding: { pageId?: string }): void;
+  report(event: AccountDiagnosticEvent): void;
+  finish(input: { outcome: string; message?: string }): void;
+}
+
+export interface AccountDiagnosticPort {
+  start(input: {
+    operation:
+      | "account.verify"
+      | "account.profile_refresh"
+      | "account.browser_open"
+      | "profile.cleanup";
+    accountId?: string;
+    platformId?: string;
+    requestId: string;
+  }): AccountDiagnosticTrace;
+}
+
 export interface BrowserSessionPort {
   openForLogin(
     account: PlatformAccountSnapshot,
     platform: PlatformModule,
     loginEntry: PlatformLoginEntry,
+    diagnostics?: AccountDiagnosticTrace,
   ): Promise<AccountBrowserPage>;
   openUserPage(
     account: PlatformAccountSnapshot,
     platform: PlatformModule,
+    diagnostics?: AccountDiagnosticTrace,
   ): Promise<AccountBrowserPage>;
   openForVerification(
     account: PlatformAccountSnapshot,
     platform: PlatformModule,
+    diagnostics?: AccountDiagnosticTrace,
   ): Promise<
     Pick<AccountBrowserPage, "driver" | "sessionProbeClient"> & {
       readonly dataClient: PlatformDataClient;

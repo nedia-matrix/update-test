@@ -31,7 +31,10 @@ describe("desktop runtime cleanup", () => {
     const publishObservations = { stopAll: vi.fn() };
     const mediaSelections = { clear: vi.fn() };
     const browserSessions = { closeAll: vi.fn(async () => undefined) };
-    const diagnostics = { close: vi.fn(async () => undefined) };
+    const diagnostics = {
+      flush: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
 
     await shutdownDesktopRuntime({
       browserSessions,
@@ -43,6 +46,7 @@ describe("desktop runtime cleanup", () => {
     expect(publishObservations.stopAll).toHaveBeenCalledOnce();
     expect(mediaSelections.clear).toHaveBeenCalledOnce();
     expect(browserSessions.closeAll).toHaveBeenCalledOnce();
+    expect(diagnostics.flush).toHaveBeenCalledOnce();
     expect(diagnostics.close).toHaveBeenCalledOnce();
   });
 

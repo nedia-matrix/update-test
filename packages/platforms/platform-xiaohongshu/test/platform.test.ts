@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  detectPlatformSession,
+  type AutomationDriver,
+} from "@nedia-matrix/automation-engine";
 
 import { xiaohongshuPlatformModule } from "../src/index.js";
 
@@ -8,8 +12,10 @@ describe("Xiaohongshu platform workflow", () => {
       expect.objectContaining({
         identityScheme: "xiaohongshu.red_num",
         source: {
-          kind: "request",
+          kind: "observed-response",
+          method: "GET",
           url: "https://creator.xiaohongshu.com/api/galaxy/creator/home/personal_info",
+          timeoutMs: 10_000,
         },
       }),
     ]);
@@ -17,6 +23,82 @@ describe("Xiaohongshu platform workflow", () => {
       xiaohongshuPlatformModule.accounts.detection.domFallback,
     ).toBeUndefined();
   });
+
+  it("recognizes the page session even when a direct API request would be forbidden", async () => {
+    const fetchJson = vi
+      .fn()
+      .mockResolvedValue({ status: 403, ok: false, body: null });
+    const waitForJsonResponse = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      body: {
+        data: {
+          red_num: "123456",
+          name: "测试账号",
+          avatar: "https://example.test/avatar.png",
+        },
+      },
+    });
+    await expect(
+      detectPlatformSession(
+        xiaohongshuPlatformModule.accounts.detection,
+        {} as AutomationDriver,
+        { fetchJson, waitForJsonResponse },
+      ),
+    ).resolves.toMatchObject({
+      status: "authenticated",
+      identityScheme: "xiaohongshu.red_num",
+      externalAccountId: "123456",
+      nickname: "测试账号",
+      source: "response",
+    });
+    expect(fetchJson).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 401, ok: false, body: null, expected: "login_required" },
+    { status: 403, ok: false, body: null, expected: "login_required" },
+    { status: 200, ok: true, body: {}, expected: "unknown" },
+  ])(
+    "does not authenticate an invalid page response ($status)",
+    async ({ expected, ...response }) => {
+      await expect(
+        detectPlatformSession(
+          xiaohongshuPlatformModule.accounts.detection,
+          {
+            currentUrl: async () => "https://creator.xiaohongshu.com/new/home",
+          } as AutomationDriver,
+          {
+            fetchJson: vi.fn(),
+            waitForJsonResponse: vi.fn().mockResolvedValue(response),
+          },
+        ),
+      ).resolves.toMatchObject({ status: expected });
+    },
+  );
+
+  it.each([
+    [
+      "https://creator.xiaohongshu.com/login?redirect=%2Fnew%2Fhome",
+      "login_required",
+    ],
+    ["https://creator.xiaohongshu.com/new/home", "unknown"],
+    ["https://other.example/login", "unknown"],
+  ])(
+    "classifies a missing identity response on %s as %s",
+    async (url, status) => {
+      await expect(
+        detectPlatformSession(
+          xiaohongshuPlatformModule.accounts.detection,
+          { currentUrl: async () => url } as AutomationDriver,
+          {
+            fetchJson: vi.fn(),
+            waitForJsonResponse: vi.fn().mockResolvedValue(null),
+          },
+        ),
+      ).resolves.toMatchObject({ status });
+    },
+  );
 
   it("submits through the closed-shadow publish component host", () => {
     const submit =

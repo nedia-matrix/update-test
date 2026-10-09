@@ -1,19 +1,25 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { migrateMetadataSchema } from "./schema-migrations.js";
+import {
+  migrateMetadataSchema,
+  type MetadataMigrationObserver,
+} from "./schema-migrations.js";
 
 export class DesktopMetadataDatabase {
   readonly connection: DatabaseSync;
   private closed = false;
 
-  constructor(readonly filename: string) {
+  constructor(
+    readonly filename: string,
+    observer?: MetadataMigrationObserver,
+  ) {
     const existed = existsSync(filename);
     mkdirSync(dirname(filename), { recursive: true });
     this.connection = new DatabaseSync(filename);
     try {
       this.connection.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=250;");
-      migrateMetadataSchema(this, existed);
+      migrateMetadataSchema(this, existed, observer);
       this.connection.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
       if (
         this.connection.prepare("PRAGMA journal_mode").get()?.journal_mode !==
@@ -25,6 +31,7 @@ export class DesktopMetadataDatabase {
         throw new Error("Required metadata durability settings unavailable");
       }
       this.checkIntegrity();
+      observer?.report("persistence.sqlite.integrity_verified");
     } catch (error) {
       this.close();
       throw error;

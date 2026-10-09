@@ -18,6 +18,14 @@ export class RuntimePublicationRoutes {
       const input = parseRuntimePublicationRequest(
         await readJsonRequest(request),
       );
+      if (this.application.publications.wasDeleted?.(input.requestId)) {
+        writeJson(response, 409, {
+          code: "PUBLICATION_DELETED",
+          message:
+            "Publication request was deleted locally and cannot be replayed",
+        });
+        return;
+      }
       const existing = this.application.publications
         .list()
         .find((publication) => publication.requestId === input.requestId);
@@ -29,6 +37,14 @@ export class RuntimePublicationRoutes {
         platformId: input.platform,
         externalAccountId: input.externalAccountId,
       });
+      if (this.application.publications.wasDeleted?.(input.requestId)) {
+        writeJson(response, 409, {
+          code: "PUBLICATION_DELETED",
+          message:
+            "Publication request was deleted locally and cannot be replayed",
+        });
+        return;
+      }
       const result = await this.application.publications.prepareRemote({
         accountId: account.id,
         requestId: input.requestId,
@@ -62,6 +78,12 @@ export class RuntimePublicationRoutes {
       const summary = this.application.publications
         .list()
         .find((publication) => publication.requestId === input.requestId);
+      if (
+        !summary &&
+        (result.status === "failed" || result.status === "uncertain")
+      ) {
+        throw new Error(result.message);
+      }
       if (!summary) throw new Error("Publication was not persisted");
       writeJson(response, 202, runtimePublicationStatus(summary));
     } catch (error) {
@@ -98,7 +120,12 @@ export class RuntimePublicationRoutes {
       200,
       summary
         ? runtimePublicationStatus(summary)
-        : { requestId, state: "missing" },
+        : {
+            requestId,
+            state: this.application.publications.wasDeleted?.(requestId)
+              ? "deleted"
+              : "missing",
+          },
     );
   }
 }

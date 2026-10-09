@@ -34,6 +34,7 @@ export interface DomSessionFallback {
 
 export interface SessionDetectionPlan {
   readonly probes: readonly SessionProbe[];
+  readonly loggedOutUrl?: string;
   readonly domFallback?: DomSessionFallback;
 }
 

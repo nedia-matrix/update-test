@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { spawnSync } from "node:child_process";
 import {
   PublishingService,
+  PublicationService,
   type PublicationSnapshot,
 } from "@nedia-matrix/publishing";
 import { openDesktopMetadata } from "../src/main/persistence/open-desktop-metadata.js";
@@ -317,7 +318,14 @@ describe("SQLite desktop metadata", () => {
         runtime_account_id TEXT NOT NULL,
         record TEXT NOT NULL
       );
+      DROP TABLE publication_attention_history;
+      DROP TABLE publication_attention_resolution;
+      DROP TABLE publication_query;
+      DROP TABLE publication_selected_contents;
+      DROP TABLE publication_deleted_requests;
       DELETE FROM legacy_imports;
+      DELETE FROM schema_migrations WHERE version=5;
+      DELETE FROM schema_migrations WHERE version=4;
       DELETE FROM schema_migrations WHERE version=3;
       PRAGMA user_version=2;
     `);
@@ -334,7 +342,7 @@ describe("SQLite desktop metadata", () => {
     expect(
       upgraded.database.connection.prepare("PRAGMA user_version").get()
         ?.user_version,
-    ).toBe(3);
+    ).toBe(5);
   });
 
   it("creates one database, imports three missing sources once, and persists after reopen", () => {
@@ -763,13 +771,230 @@ describe("SQLite desktop metadata", () => {
     expect(
       metadata.database.connection.prepare("PRAGMA user_version").get()
         ?.user_version,
-    ).toBe(3);
+    ).toBe(5);
 
     metadata.database.connection
       .prepare("DELETE FROM platform_accounts WHERE id=?")
       .run(account.id);
     expect(metadata.platformContents.listByAccount(account.id)).toEqual([]);
     expect(metadata.platformContents.latestRun(account.id)).toBeUndefined();
+  });
+
+  it("keeps the publication query projection and attention counts in sync", () => {
+    const metadata = open();
+    const service = publishing(metadata);
+    const record = publication(service);
+
+    expect(
+      metadata.publications.query({ view: "pending", limit: 10 }),
+    ).toMatchObject({
+      records: [record],
+      nextCursor: null,
+      counts: {
+        actionRequired: 0,
+        inProgress: 1,
+        openAttentionRequired: 0,
+        completed: 0,
+      },
+    });
+
+    const uncertain = {
+      ...record,
+      requestId: "request-uncertain",
+      publication: {
+        ...record.publication,
+        id: "publication-uncertain",
+        state: "failed" as const,
+        transitions: [
+          ...record.publication.transitions,
+          {
+            from: record.publication.state,
+            to: "failed" as const,
+            occurredAt: "2026-09-09T00:00:01.000Z",
+          },
+        ],
+      },
+      contentRevision: {
+        ...record.contentRevision,
+        contentItemId: "publication-uncertain",
+      },
+      updatedAt: "2026-09-09T00:00:01.000Z",
+    };
+    metadata.publications.save(uncertain);
+    metadata.publicationAttention.set({
+      publicationId: uncertain.publication.id,
+      resolution: "acknowledged_failure",
+      resolvedAt: "2026-09-09T00:00:01.000Z",
+    });
+    expect(
+      metadata.publications.query({ view: "pending", limit: 10 }),
+    ).toMatchObject({
+      records: [record],
+      counts: { inProgress: 1, openAttentionRequired: 0 },
+    });
+    metadata.publicationAttention.remove(uncertain.publication.id);
+    expect(
+      metadata.publications.query({ view: "pending", limit: 10 }).records,
+    ).toHaveLength(2);
+  });
+
+  it("counts an uncertain task with a manual work ID as completed without changing its execution", () => {
+    const metadata = open();
+    const base = publication(publishing(metadata));
+    const uncertain = {
+      ...base,
+      publication: {
+        ...base.publication,
+        state: "uncertain" as const,
+        transitions: [
+          ...base.publication.transitions,
+          {
+            from: base.publication.state,
+            to: "awaiting_confirmation" as const,
+            occurredAt: "2026-09-09T00:00:00.300Z",
+          },
+          {
+            from: "awaiting_confirmation" as const,
+            to: "uncertain" as const,
+            occurredAt: "2026-09-09T00:00:01.000Z",
+          },
+        ],
+      },
+      updatedAt: "2026-09-09T00:00:01.000Z",
+    };
+    metadata.publications.save(uncertain);
+    const tasks = new PublicationService({
+      publishing: metadata.publications,
+      attention: metadata.publicationAttention,
+      accountPublications: { isActive: () => false },
+    } as never);
+    expect(() =>
+      tasks.resolveAttention({
+        publicationId: uncertain.publication.id,
+        resolution: "confirmed_published",
+      }),
+    ).toThrow("work ID");
+    expect(
+      tasks.resolveAttention({
+        publicationId: uncertain.publication.id,
+        resolution: "confirmed_published",
+        manualPlatformContentId: "work-123",
+      }).effectiveDisplayGroup,
+    ).toBe("completed");
+    const completed = metadata.publications.query({
+      view: "all",
+      group: "completed",
+      limit: 10,
+    });
+    expect(completed.total).toBe(1);
+    expect(completed.records[0]?.publication.state).toBe("uncertain");
+    expect(completed.counts).toMatchObject({
+      completed: 1,
+      completedManual: 1,
+      openAttentionRequired: 0,
+      pending: 0,
+    });
+    expect(
+      metadata.publicationAttention.history(uncertain.publication.id),
+    ).toHaveLength(1);
+    metadata.publicationAttention.remove(uncertain.publication.id);
+    expect(
+      metadata.publications.query({ view: "pending", limit: 10 }).total,
+    ).toBe(1);
+    expect(
+      metadata.publicationAttention.history(uncertain.publication.id),
+    ).toHaveLength(2);
+  });
+
+  it("upgrades schema v3 with existing publications to the task center schema", () => {
+    const root = directory();
+    const metadata = open(root);
+    const record = publication(publishing(metadata));
+    metadata.database.connection.exec(`
+      DROP TABLE publication_attention_history;
+      DROP TABLE publication_attention_resolution;
+      DROP TABLE publication_query;
+      DROP TABLE publication_selected_contents;
+      DROP TABLE publication_deleted_requests;
+      DELETE FROM schema_migrations WHERE version=5;
+      DELETE FROM schema_migrations WHERE version=4;
+      PRAGMA user_version=3;
+    `);
+    metadata.database.close();
+    const upgraded = open(root);
+    expect(
+      upgraded.database.connection.prepare("PRAGMA user_version").get()
+        ?.user_version,
+    ).toBe(5);
+    expect(upgraded.publications.get(record.publication.id)).toEqual(record);
+    expect(
+      upgraded.publications.query({ view: "all", limit: 10 }).records,
+    ).toEqual([record]);
+    expect(
+      upgraded.publicationAttention.history(record.publication.id),
+    ).toEqual([]);
+  });
+
+  it("keeps a deleted request blocked while removing its selected work", () => {
+    const root = directory();
+    const metadata = open(root);
+    const record = publication(publishing(metadata), "delete-once");
+    metadata.publications.selectContent(record.publication.id, "work-123");
+    expect(metadata.publications.selectedContentId(record.publication.id)).toBe(
+      "work-123",
+    );
+
+    metadata.publications.remove(record.publication.id);
+    expect(metadata.publications.get(record.publication.id)).toBeUndefined();
+    expect(
+      metadata.publications.selectedContentId(record.publication.id),
+    ).toBeNull();
+    expect(metadata.publications.isDeletedRequestId("delete-once")).toBe(true);
+    expect(() => metadata.publications.save(record)).toThrow(
+      "cannot be replayed",
+    );
+
+    metadata.database.close();
+    const reopened = open(root);
+    expect(reopened.publications.isDeletedRequestId("delete-once")).toBe(true);
+  });
+
+  it("upgrades a v4 publication database without changing its records", () => {
+    const root = directory();
+    const metadata = open(root);
+    const record = publication(publishing(metadata), "v4-request");
+    metadata.database.connection.exec(`
+      DROP TABLE publication_selected_contents;
+      DROP TABLE publication_deleted_requests;
+      DELETE FROM schema_migrations WHERE version=5;
+      PRAGMA user_version=4;
+    `);
+    metadata.database.close();
+
+    const upgraded = open(root);
+    expect(upgraded.publications.get(record.publication.id)).toEqual(record);
+    expect(
+      upgraded.database.connection.prepare("PRAGMA user_version").get()
+        ?.user_version,
+    ).toBe(5);
+    upgraded.publications.selectContent(record.publication.id, "work-1");
+    expect(upgraded.publications.selectedContentId(record.publication.id)).toBe(
+      "work-1",
+    );
+  });
+
+  it("does not delete a publication while its observation inbox is pending", () => {
+    const metadata = open();
+    const record = publication(publishing(metadata), "pending-observation");
+    metadata.inbox.append(eventFor(record));
+
+    expect(() => metadata.publications.remove(record.publication.id)).toThrow(
+      "pending observations",
+    );
+    expect(metadata.publications.get(record.publication.id)).toEqual(record);
+    expect(metadata.publications.isDeletedRequestId(record.requestId)).toBe(
+      false,
+    );
   });
 
   it("rolls back all imported records when a transaction write fails", () => {

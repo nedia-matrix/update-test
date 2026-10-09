@@ -1,6 +1,7 @@
 import type { PreparePublishDraftRequest } from "./index.js";
 import {
   composePublishDescription,
+  normalizePublishBody,
   preparePublishText,
 } from "@nedia-matrix/platform-sdk";
 
@@ -47,45 +48,151 @@ export class PublishDraftOrchestrator {
         state: existingPublication.publication.state,
       } as const;
     }
-    if (account.lifecycle !== "active") {
+    const trace =
+      account.lifecycle === "active" || request.sourcePublicationId
+        ? startAutomationTrace(this.dependencies, {
+            operation: "publication.prepare",
+            requestId,
+            accountId: account.id,
+            platformId: account.platformId,
+          })
+        : undefined;
+    let preflightStage = "source_publication";
+    const preflight = (() => {
+      try {
+        const sourcePublication = request.sourcePublicationId
+          ? this.requireRecreatableSource(request.sourcePublicationId, request)
+          : undefined;
+        if (sourcePublication && submissionMode !== "manual_confirmation") {
+          throw new TypeError(
+            "Recreated drafts require manual confirmation before publishing",
+          );
+        }
+        if (account.lifecycle !== "active") {
+          return { kind: "account_unknown" } as const;
+        }
+        preflightStage = "platform_capability";
+        const platform = this.dependencies.platforms.require(
+          account.platformId,
+        );
+        const form = platform.publishing?.forms[request.contentForm];
+        if (!form) {
+          throw new TypeError(
+            `${platform.displayName} does not support this draft`,
+          );
+        }
+        const publishRuntime = platform.publishing;
+        if (!publishRuntime) {
+          throw new TypeError(
+            `${platform.displayName} does not support publish observation`,
+          );
+        }
+        preflightStage = "prepare_content";
+        const title = request.title.trim();
+        const body = normalizePublishBody(form, request.body.trim());
+        const preparedText = preparePublishText(form, body, request.tags);
+        const description = composePublishDescription(form, {
+          title,
+          body: preparedText.body,
+        });
+        return {
+          kind: "ready",
+          sourcePublication,
+          platform,
+          form,
+          title,
+          body,
+          preparedText,
+          description,
+          publishRuntime,
+        } as const;
+      } catch (error) {
+        trace?.report({
+          component: "application",
+          event: "publication.preflight.failed",
+          level: "error",
+          details: {
+            code: "PUBLICATION_PREFLIGHT_FAILED",
+            stage: preflightStage,
+            errorName: error instanceof Error ? error.name : "UnknownError",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Unable to prepare publication request",
+          },
+        });
+        trace?.finish({ outcome: "failed" });
+        throw error;
+      }
+    })();
+    if (preflight.kind === "account_unknown") {
+      trace?.finish({ outcome: "account_unknown" });
       return {
         status: "account_unknown",
         reason: "账号身份仍在识别，暂不能创建发布任务",
       } as const;
     }
-    const platform = this.dependencies.platforms.require(account.platformId);
-    const form = platform.publishing?.forms[request.contentForm];
-    if (!form) {
-      throw new TypeError(
-        `${platform.displayName} does not support this draft`,
-      );
-    }
-    const title = request.title.trim();
-    const body = request.body.trim();
-    const preparedText = preparePublishText(form, body, request.tags);
-    const description = composePublishDescription(form, {
+    const {
+      sourcePublication,
+      platform,
+      form,
       title,
-      body: preparedText.body,
-    });
-    const publishRuntime = platform.publishing;
-    if (!publishRuntime) {
-      throw new TypeError(
-        `${platform.displayName} does not support publish observation`,
-      );
+      body,
+      preparedText,
+      description,
+      publishRuntime,
+    } = preflight;
+    let acquiredLease: ReturnType<
+      PublicationApplicationDependencies["accountPublications"]["acquire"]
+    >;
+    try {
+      acquiredLease = this.dependencies.accountPublications.acquire(account.id);
+    } catch (error) {
+      trace?.report({
+        component: "application",
+        event: "publication.lease.failed",
+        level: "error",
+        details: {
+          code: "PUBLICATION_LEASE_FAILED",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unable to acquire publication lease",
+        },
+      });
+      trace?.finish({ outcome: "failed" });
+      throw error;
     }
-    const publicationLease = this.dependencies.accountPublications.acquire(
-      account.id,
-    );
-    if (!publicationLease) return { status: "account_busy" } as const;
-
-    const trace = startAutomationTrace(this.dependencies, {
-      operation: "publish",
-      requestId,
-      accountId: account.id,
-      platformId: platform.id,
+    if (!acquiredLease) {
+      trace?.report({
+        component: "application",
+        event: "publication.lease.rejected",
+        level: "warn",
+        details: { code: "ACCOUNT_BUSY", retryable: true },
+      });
+      trace?.finish({ outcome: "account_busy" });
+      return { status: "account_busy" } as const;
+    }
+    let leaseReleased = false;
+    const publicationLease = {
+      release: () => {
+        if (leaseReleased) return;
+        leaseReleased = true;
+        acquiredLease.release();
+        trace?.report({
+          component: "application",
+          event: "publication.lease.released",
+        });
+      },
+    };
+    trace?.report({
+      component: "application",
+      event: "publication.lease.acquired",
     });
 
     let observationOwnsLease = false;
+    let failureNoticeShown = false;
     let publishObservation: ManagedPublishObservation | undefined;
     let publicationId: string | undefined;
     let opened: PublicationBrowserPage | undefined;
@@ -124,8 +231,25 @@ export class PublishDraftOrchestrator {
         request.accountId,
         request.contentForm,
       );
+      for (const [index, asset] of selection.files.entries()) {
+        if (!asset.localRelativePath) continue;
+        const archivedPath = await this.dependencies.resolveArchiveAssetPath?.(
+          asset.localRelativePath,
+        );
+        if (
+          !archivedPath ||
+          selection.resourceReferences[index] !== archivedPath
+        ) {
+          throw new TypeError(
+            `Archived media is unavailable: ${asset.name}. Select it again before starting.`,
+          );
+        }
+      }
       const preparation = this.dependencies.publishing.startPreparation({
         requestId,
+        ...(sourcePublication
+          ? { sourcePublicationId: sourcePublication.publication.id }
+          : {}),
         accountId: account.id,
         platformId: platform.id,
         contentForm: request.contentForm,
@@ -152,6 +276,16 @@ export class PublishDraftOrchestrator {
           publicationId: publication.publication.id,
           state: publication.publication.state,
         } as const;
+      }
+      if (
+        sourcePublication &&
+        ["failed", "uncertain"].includes(sourcePublication.publication.state)
+      ) {
+        this.dependencies.attention?.set({
+          publicationId: sourcePublication.publication.id,
+          resolution: "recreated",
+          resolvedAt: new Date().toISOString(),
+        });
       }
       opened = await this.dependencies.browser.openForPublication(
         account,
@@ -192,17 +326,27 @@ export class PublishDraftOrchestrator {
         platformId: platform.id,
         monitor,
         diagnostics: trace,
-        onFinished: async () => {
+        onFinished: async (result) => {
           try {
             await publishPage.release();
           } finally {
             publicationLease.release();
           }
+          if (result?.kind === "failed" || result?.kind === "uncertain") {
+            failureNoticeShown = true;
+            showPublicationFailureNotice(
+              this.dependencies,
+              account.id,
+              publication.publication.id,
+              result.message,
+              result.kind === "failed" ? "publish.failed" : "publish.uncertain",
+              submissionMode === "manual_confirmation",
+            );
+          }
         },
       });
       observationOwnsLease = true;
       await publishObservation.ready();
-      publishObservation.arm();
       await this.dependencies.workflow.execute(
         form.automation.prepare,
         opened.driver,
@@ -220,6 +364,14 @@ export class PublishDraftOrchestrator {
         publication.publication.id,
       );
       if (afterPreparation?.publication.state !== "preparing") {
+        if (
+          afterPreparation?.publication.state === "submitting" ||
+          afterPreparation?.publication.state === "verifying" ||
+          afterPreparation?.publication.state === "awaiting_confirmation"
+        ) {
+          if (submissionMode === "manual_confirmation") await opened.handoff();
+          publishObservation.arm();
+        }
         await focusForReview(opened, platform.id, this.dependencies);
         return {
           status: "already_started",
@@ -230,14 +382,15 @@ export class PublishDraftOrchestrator {
       }
       if (submissionMode === "manual_confirmation") {
         await opened.handoff();
+        this.dependencies.publishing.markAwaitingConfirmation(
+          publication.publication.id,
+        );
+        publishObservation.arm();
         trace?.report({
           component: "application",
           event: "automation.control_completed",
           details: { outcome: "ready_for_review" },
         });
-        this.dependencies.publishing.markAwaitingConfirmation(
-          publication.publication.id,
-        );
         await focusForReview(opened, platform.id, this.dependencies);
         showPublicationNotice(
           this.dependencies,
@@ -253,6 +406,7 @@ export class PublishDraftOrchestrator {
         } as const;
       }
 
+      publishObservation.arm();
       this.dependencies.publishing.markSubmitting(publication.publication.id);
       await opened.verifyIdentity();
       const accountBeforeSubmit = this.dependencies.accounts.require(
@@ -290,6 +444,15 @@ export class PublishDraftOrchestrator {
     } catch (error) {
       // Persist and return the actionable workflow error without replacing it
       // with the observation host's generic interruption fallback.
+      let pageAvailable = false;
+      if (opened) {
+        try {
+          await opened.handoff();
+          pageAvailable = true;
+        } catch {
+          // A closed or unavailable page cannot be handed to the user.
+        }
+      }
       await publishObservation?.stopSilently();
       this.dependencies.mediaSelections.release(request.mediaSelectionId);
       const result = handlePublishFailure(
@@ -298,6 +461,21 @@ export class PublishDraftOrchestrator {
         this.dependencies.publishing,
         this.dependencies.failureClassifier,
       );
+      if (
+        !failureNoticeShown &&
+        (result.status === "failed" || result.status === "uncertain")
+      ) {
+        showPublicationFailureNotice(
+          this.dependencies,
+          account.id,
+          publicationId,
+          result.message,
+          result.status === "failed"
+            ? "publish.preparation_failed"
+            : "publish.uncertain",
+          pageAvailable,
+        );
+      }
       trace?.finish({
         outcome: result.status,
         message: "message" in result ? result.message : undefined,
@@ -313,12 +491,48 @@ export class PublishDraftOrchestrator {
       }
     }
   }
+
+  private requireRecreatableSource(
+    sourcePublicationId: string,
+    request: PreparePublishDraftRequest,
+  ) {
+    const source = this.dependencies.publishing.get(sourcePublicationId);
+    if (!source) throw new TypeError("Source publication does not exist");
+    const state = source.publication.state;
+    const attention = this.dependencies.attention?.get(sourcePublicationId);
+    if (
+      !["failed", "cancelled", "rejected", "published"].includes(state) &&
+      !(
+        state === "uncertain" &&
+        attention?.resolution === "confirmed_not_published"
+      )
+    ) {
+      throw new TypeError(
+        "Source publication must be terminal and verified before recreation",
+      );
+    }
+    if (
+      this.dependencies.accountPublications.isActive(
+        source.publication.accountId,
+      )
+    )
+      throw new TypeError("Source publication account is busy");
+    if (
+      request.accountId !== source.publication.accountId ||
+      request.contentForm !== source.contentForm
+    ) {
+      throw new TypeError(
+        "Recreated draft identity does not match the source publication",
+      );
+    }
+    return source;
+  }
 }
 
 function startAutomationTrace(
   dependencies: PublicationApplicationDependencies,
   input: {
-    operation: "publish";
+    operation: "publication.prepare";
     requestId: string;
     accountId: string;
     platformId: string;
@@ -400,5 +614,26 @@ function showPublicationNotice(
     });
   } catch {
     // Presentation failures do not change a completed preparation.
+  }
+}
+
+function showPublicationFailureNotice(
+  dependencies: PublicationApplicationDependencies,
+  accountId: string,
+  publicationId: string | undefined,
+  message: string,
+  kind: "publish.preparation_failed" | "publish.failed" | "publish.uncertain",
+  pageAvailable: boolean,
+): void {
+  try {
+    dependencies.notices?.show({
+      kind,
+      accountId,
+      ...(publicationId ? { publicationId } : {}),
+      message,
+      pageAvailable,
+    });
+  } catch (error) {
+    console.error("Failed to show publication failure notice", error);
   }
 }

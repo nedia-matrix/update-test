@@ -1,15 +1,15 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "build": "electron-vite build",
     "dev": "electron-vite dev",
-    "package:mac": "pnpm run build && electron-builder --mac --publish never",
-    "package:win": "pnpm run build && electron-builder --win nsis portable --x64 --publish never",
-    "package:win:portable": "pnpm run build && electron-builder --win portable --x64 --publish never",
+    "package:mac": "node ../../scripts/package-desktop.mjs mac",
+    "package:win": "node ../../scripts/package-desktop.mjs win",
+    "package:win:portable": "node ../../scripts/package-desktop.mjs win:portable",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
   },
@@ -18,6 +18,7 @@
     "@nedia-matrix/publishing": "workspace:*",
     "@nedia-matrix/automation-engine": "workspace:*",
     "@nedia-matrix/automation-playwright": "workspace:*",
+    "@nedia-matrix/diagnostics": "workspace:*",
     "@nedia-matrix/platform-sdk": "workspace:*",
     "@nedia-matrix/platform-content": "workspace:*",
     "@nedia-matrix/platform-douyin": "workspace:*",
@@ -38,6 +39,7 @@
   "build": {
     "appId": "com.nediamatrix.desktop",
     "productName": "NediaMatrix",
+    "compression": "maximum",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "electronLanguages": [
       "zh-CN",
@@ -67,6 +69,13 @@
       "target": [
         {
           "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "arm64",
             "x64"

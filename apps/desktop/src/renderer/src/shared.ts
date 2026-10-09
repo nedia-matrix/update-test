@@ -20,6 +20,57 @@ export const publicationStateLabels: Readonly<
   cancelled: "已取消",
 };
 
+export type PublicationDisplayGroup =
+  | "action_required"
+  | "in_progress"
+  | "attention_required"
+  | "completed"
+  | "closed";
+
+export const publicationDisplayGroupLabels: Readonly<
+  Record<PublicationDisplayGroup, string>
+> = {
+  action_required: "待操作",
+  in_progress: "进行中",
+  attention_required: "发布异常",
+  completed: "已完成",
+  closed: "已结束",
+};
+
+export const publicationDisplayGroupOrder: readonly PublicationDisplayGroup[] =
+  [
+    "action_required",
+    "in_progress",
+    "attention_required",
+    "completed",
+    "closed",
+  ];
+
+export function publicationDisplayGroup(
+  state: PublicationStatus,
+): PublicationDisplayGroup {
+  switch (state) {
+    case "awaiting_confirmation":
+      return "action_required";
+    case "draft":
+    case "validated":
+    case "scheduled":
+    case "preparing":
+    case "submitting":
+    case "verifying":
+    case "retrying":
+      return "in_progress";
+    case "uncertain":
+    case "failed":
+      return "attention_required";
+    case "published":
+      return "completed";
+    case "rejected":
+    case "cancelled":
+      return "closed";
+  }
+}
+
 export function requireElement<T extends Element>(
   root: ParentNode,
   selector: string,

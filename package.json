@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "pnpm@11.5.3",
+  "packageManager": "pnpm@11.25.0",
   "scripts": {
     "build": "turbo run build",
     "browser:install": "pnpm --filter @nedia-matrix/automation-playwright exec playwright install chromium",
@@ -13,12 +13,14 @@
     "desktop:package:win": "pnpm desktop:build-dependencies && pnpm --filter @nedia-matrix/desktop package:win",
     "desktop:package:win:portable": "pnpm desktop:build-dependencies && pnpm --filter @nedia-matrix/desktop package:win:portable",
     "mock": "turbo run build --filter='./packages/**' && pnpm --filter @nedia-matrix/mock-platform dev",
-    "publish:gitee": "node scripts/publish-gitee.mjs",
+    "test:release": "node --test scripts/test/*.test.mjs",
+    "updates:generate-keys": "node scripts/generate-update-keys.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "postinstall": "node scripts/fix-electron.mjs",
     "test": "turbo run test",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck",
+    "browser:install:fingerprint": "turbo run build --filter=@nedia-matrix/automation-playwright && node packages/automation/playwright/scripts/install-fingerprint-browser.mjs"
   },
   "devDependencies": {
     "prettier": "^3.8.3",

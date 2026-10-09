@@ -2,6 +2,7 @@ export { PlaywrightAutomationDriver } from "./automation-driver.js";
 export { isAllowedPlatformNavigation } from "./navigation-policy.js";
 export { createPlaywrightPlatformDataClient } from "./platform-data-client.js";
 export {
+  BrowserLaunchError,
   browserLaunchCandidates,
   openPersistentBrowserContext,
   type OpenedBrowserContext,
@@ -20,3 +21,11 @@ export {
   createManagedBrowserPage,
   type ManagedBrowserPage,
 } from "./managed-browser-page.js";
+
+export { HumanInteractionSession } from "./human-interaction.js";
+export {
+  browserRuntimeFromEnvironment,
+  loadBrowserRuntime,
+  verifyFingerprintBrowser,
+  type BrowserRuntimeConfiguration,
+} from "./browser-runtime.js";

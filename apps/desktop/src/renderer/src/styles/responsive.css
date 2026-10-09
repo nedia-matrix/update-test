@@ -1,0 +1,95 @@
+@media (max-width: 1120px) {
+  .account-list-heading,
+  .account-row {
+    grid-template-columns:
+      minmax(145px, 1.3fr) minmax(70px, 0.55fr) minmax(130px, 0.9fr)
+      minmax(100px, 0.75fr) minmax(100px, auto);
+    column-gap: 10px;
+  }
+  .platform-content-heading,
+  .platform-content-row {
+    grid-template-columns:
+      minmax(200px, 1.35fr) minmax(68px, 0.4fr) minmax(180px, 1fr)
+      minmax(86px, 0.5fr);
+  }
+  .platform-content-heading > :nth-child(5),
+  .platform-content-row > :nth-child(5) {
+    display: none;
+  }
+}
+
+@media (max-width: 1020px) {
+  .content-list-heading,
+  .content-record {
+    grid-template-columns:
+      minmax(0, 1.4fr) minmax(0, 0.85fr) minmax(0, 0.8fr)
+      176px;
+    column-gap: 8px;
+  }
+  .content-list-heading > :nth-child(4),
+  .content-time-cell {
+    display: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .publish-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .publish-inspector {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .publish-inspector > .surface-header,
+  .publish-action-area {
+    grid-column: 1 / -1;
+  }
+  .publish-inspector > .inspector-section + .inspector-section {
+    border-left: 1px solid var(--border);
+  }
+  .publish-action-area {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .publish-action-area .primary-action {
+    width: auto;
+    min-width: 180px;
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+  .publish-action-note {
+    text-align: left;
+  }
+}
+
+@media (max-width: 940px) {
+  .app-shell {
+    --sidebar-width: 160px;
+  }
+  .workspace {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .platform-grid {
+    grid-template-columns: 1fr;
+  }
+  .account-profile-copy {
+    max-width: 36vw;
+  }
+}
+
+@media (max-height: 680px) {
+  .publish-inspector {
+    position: static;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

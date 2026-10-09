@@ -23,7 +23,7 @@ export class PublishObservationManager {
     platformId: string;
     monitor: PublishResultMonitor;
     diagnostics?: PublishAutomationDiagnosticTrace;
-    onFinished?: () => void | Promise<void>;
+    onFinished?: (result?: PublishResultEvent) => void | Promise<void>;
   }): ManagedPublishObservation {
     void this.stop(input.accountId);
     const id = randomUUID();
@@ -60,8 +60,8 @@ export class PublishObservationManager {
       }
     };
     report("monitor.attached");
-    const finish = (): Promise<void> =>
-      (finishing ??= Promise.resolve().then(() => input.onFinished?.()));
+    const finish = (result?: PublishResultEvent): Promise<void> =>
+      (finishing ??= Promise.resolve().then(() => input.onFinished?.(result)));
     const persist = (result: PublishResultEvent): Promise<void> => {
       const event: PublishObservationEvent = {
         eventId: randomUUID(),
@@ -83,13 +83,13 @@ export class PublishObservationManager {
       return persistenceTail;
     };
     let unsubscribe = (): void => undefined;
-    const finalize = async (): Promise<void> => {
+    const finalize = async (result?: PublishResultEvent): Promise<void> => {
       unsubscribe();
       input.monitor.stop();
       if (this.observations.get(input.accountId) === hosted) {
         this.observations.delete(input.accountId);
       }
-      await finish();
+      await finish(result);
     };
     unsubscribe = input.monitor.subscribe((result) => {
       if (
@@ -110,7 +110,7 @@ export class PublishObservationManager {
         completed = true;
         void persisted
           .then(async () => {
-            await finalize();
+            await finalize(result);
             finishDiagnostics(result.kind);
           })
           .catch((error: unknown) => {

@@ -1,17 +1,7 @@
-export type ThemePreference = "system" | "light" | "dark";
+import type { ThemePreference } from "../../bridge/preferences.js";
+
+export type { ThemePreference } from "../../bridge/preferences.js";
 export type ResolvedTheme = Exclude<ThemePreference, "system">;
-
-const storageKey = "nedia-matrix.theme";
-
-export function loadThemePreference(): ThemePreference {
-  const stored = globalThis.localStorage.getItem(storageKey);
-  return stored === "light" || stored === "dark" ? stored : "system";
-}
-
-export function saveThemePreference(preference: ThemePreference): void {
-  if (preference === "system") globalThis.localStorage.removeItem(storageKey);
-  else globalThis.localStorage.setItem(storageKey, preference);
-}
 
 export function resolveTheme(
   preference: ThemePreference,

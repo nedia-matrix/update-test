@@ -181,6 +181,8 @@ const archiveRemovableStates: readonly PublicationState[] = [
   "published",
   "failed",
   "uncertain",
+  "cancelled",
+  "rejected",
 ];
 
 export interface PublicationAssetSnapshot {
@@ -199,6 +201,7 @@ export interface PublicationAssetSnapshot {
 
 export interface PublicationSnapshot {
   requestId: string;
+  sourcePublicationId?: string;
   publication: Readonly<PublicationStateSnapshot>;
   contentRevision: Readonly<ContentRevision>;
   contentForm: SupportedPublishContentForm;
@@ -216,6 +219,7 @@ export interface PublicationSnapshot {
 
 export interface PublicationStartInput {
   requestId: string;
+  sourcePublicationId?: string;
   publicationId: string;
   contentRevisionId: string;
   platformId: string;
@@ -366,6 +370,9 @@ export class Publication {
     );
     return new Publication({
       requestId: input.requestId,
+      ...(input.sourcePublicationId
+        ? { sourcePublicationId: input.sourcePublicationId }
+        : {}),
       publication: preparing,
       contentRevision,
       contentForm: input.contentForm,
@@ -673,6 +680,13 @@ export function assertPublicationSnapshot(
       ["updated time", snapshot.updatedAt],
     ] as const) {
       assertNonEmptyString(value, `Publication ${name}`);
+    }
+    if (
+      snapshot.sourcePublicationId !== undefined &&
+      (typeof snapshot.sourcePublicationId !== "string" ||
+        !snapshot.sourcePublicationId.trim())
+    ) {
+      throw new TypeError("Publication source ID is invalid");
     }
     assertTimestamp(snapshot.createdAt, "Publication creation time");
     assertTimestamp(snapshot.updatedAt, "Publication update time");

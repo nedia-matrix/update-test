@@ -25,18 +25,27 @@ export interface PublicationArchiveCleanupResult {
   removedAssetCount: number;
   removedPublicationIds: string[];
   reclaimedBytes: number;
+  failedAssetCount?: number;
 }
 
 export class PublicationArchiveMaintenance {
+  private operationTail: Promise<void> = Promise.resolve();
   constructor(
     private readonly publications: PublicationArchiveRepository,
     private readonly assets: PublicationArchiveAssetStore,
     private readonly activity: {
       hasActiveTask(publicationId: string): boolean;
+      hasActiveAssetUsers?(): boolean;
       now(): Date;
     } = {
       hasActiveTask: () => false,
       now: () => new Date(),
+    },
+    private readonly diagnostics?: {
+      report(input: {
+        event: string;
+        details: Readonly<Record<string, unknown>>;
+      }): void;
     },
   ) {}
 
@@ -70,76 +79,137 @@ export class PublicationArchiveMaintenance {
   async removePublication(
     publicationId: string,
   ): Promise<PublicationArchiveCleanupResult> {
-    const record = this.requirePublication(publicationId);
-    if (
-      !Publication.rehydrate(record).canBeRemovedFromArchive(
-        this.activity.hasActiveTask(publicationId),
-      )
-    ) {
-      throw new TypeError("An active publication archive cannot be removed");
-    }
-    this.publications.remove(publicationId);
-    return this.removeUnreferencedAssets([publicationId]);
+    return this.serialize(async () => {
+      const record = this.requirePublication(publicationId);
+      if (
+        !Publication.rehydrate(record).canBeRemovedFromArchive(
+          this.activity.hasActiveTask(publicationId),
+        )
+      ) {
+        throw new TypeError("An active publication archive cannot be removed");
+      }
+      const removedPaths = publicationAssetPaths([record]);
+      this.publications.remove(publicationId);
+      return this.removeUnreferencedAssets(
+        [publicationId],
+        undefined,
+        undefined,
+        removedPaths,
+      );
+    });
   }
 
   async cleanup(
     policy: PublicationArchiveCleanupPolicy,
   ): Promise<PublicationArchiveCleanupResult> {
-    validatePolicy(policy);
-    const initialAssets = await this.assets.list();
-    const initialBytes = sumAssetBytes(initialAssets);
-    const removedPublicationIds: string[] = [];
-    let remaining = this.publications.list();
-    const candidates = remaining
-      .filter((record) =>
-        Publication.rehydrate(record).canBeAutomaticallyCleanedFromArchive(
-          this.activity.hasActiveTask(record.publication.id),
-        ),
-      )
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return this.serialize(async () => {
+      validatePolicy(policy);
+      const initialAssets = await this.assets.list();
+      const initialBytes = sumAssetBytes(initialAssets);
+      const removedPublicationIds: string[] = [];
+      let remaining = this.publications.list();
+      const candidates = remaining
+        .filter((record) =>
+          Publication.rehydrate(record).canBeAutomaticallyCleanedFromArchive(
+            this.activity.hasActiveTask(record.publication.id),
+          ),
+        )
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
-    for (const candidate of candidates) {
-      const expired =
-        policy.retentionBefore !== undefined &&
-        candidate.createdAt < policy.retentionBefore.toISOString();
-      const overQuota =
-        policy.maxBytes !== undefined &&
-        sumAssetBytes(initialAssets, publicationAssetPaths(remaining)) >
-          policy.maxBytes;
-      if (!expired && !overQuota) continue;
-      this.publications.remove(candidate.publication.id);
-      removedPublicationIds.push(candidate.publication.id);
-      remaining = remaining.filter(
-        (record) => record.publication.id !== candidate.publication.id,
+      for (const candidate of candidates) {
+        const current = this.publications.get(candidate.publication.id);
+        if (
+          !current ||
+          !Publication.rehydrate(current).canBeAutomaticallyCleanedFromArchive(
+            this.activity.hasActiveTask(candidate.publication.id),
+          )
+        )
+          continue;
+        const expired =
+          policy.retentionBefore !== undefined &&
+          current.createdAt < policy.retentionBefore.toISOString();
+        const overQuota =
+          policy.maxBytes !== undefined &&
+          sumAssetBytes(initialAssets, publicationAssetPaths(remaining)) >
+            policy.maxBytes;
+        if (!expired && !overQuota) continue;
+        this.publications.remove(candidate.publication.id);
+        removedPublicationIds.push(candidate.publication.id);
+        remaining = remaining.filter(
+          (record) => record.publication.id !== candidate.publication.id,
+        );
+      }
+      return this.removeUnreferencedAssets(
+        removedPublicationIds,
+        initialAssets,
+        initialBytes,
       );
+    });
+  }
+
+  private async serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationTail;
+    let release!: () => void;
+    this.operationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
     }
-    return this.removeUnreferencedAssets(
-      removedPublicationIds,
-      initialAssets,
-      initialBytes,
-    );
   }
 
   private async removeUnreferencedAssets(
     removedPublicationIds: string[],
     inventory?: StoredPublicationAsset[],
     initialBytes?: number,
+    candidatePaths?: ReadonlySet<string>,
   ): Promise<PublicationArchiveCleanupResult> {
     const assets = inventory ?? (await this.assets.list());
     const beforeBytes = initialBytes ?? sumAssetBytes(assets);
     const referencedPaths = publicationAssetPaths(this.publications.list());
-    const unreferenced = assets.filter(
-      ({ relativePath }) => !referencedPaths.has(relativePath),
-    );
-    await Promise.all(
+    const unreferenced = this.activity.hasActiveAssetUsers?.()
+      ? []
+      : assets.filter(
+          ({ relativePath }) =>
+            !referencedPaths.has(relativePath) &&
+            (candidatePaths === undefined || candidatePaths.has(relativePath)),
+        );
+    const outcomes = await Promise.allSettled(
       unreferenced.map(({ relativePath }) => this.assets.remove(relativePath)),
     );
-    const reclaimedBytes = sumAssetBytes(unreferenced);
+    const remainingAssets = await this.assets.list();
+    const remainingPaths = new Set(
+      remainingAssets.map(({ relativePath }) => relativePath),
+    );
+    const removedAssetCount = unreferenced.filter(
+      ({ relativePath }) => !remainingPaths.has(relativePath),
+    ).length;
+    const reclaimedBytes = Math.max(
+      0,
+      beforeBytes - sumAssetBytes(remainingAssets),
+    );
+    const failedAssetCount = outcomes.filter(
+      (outcome) => outcome.status === "rejected",
+    ).length;
+    if (failedAssetCount > 0) {
+      try {
+        this.diagnostics?.report({
+          event: "publication.archive.asset_cleanup_failed",
+          details: { failedAssetCount, removedPublicationIds },
+        });
+      } catch {
+        // Diagnostic failure must not obscure a committed partial cleanup.
+      }
+    }
     return {
-      remainingBytes: beforeBytes - reclaimedBytes,
-      removedAssetCount: unreferenced.length,
+      remainingBytes: sumAssetBytes(remainingAssets),
+      removedAssetCount,
       removedPublicationIds,
       reclaimedBytes,
+      ...(failedAssetCount > 0 ? { failedAssetCount } : {}),
     };
   }
 

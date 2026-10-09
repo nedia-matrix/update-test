@@ -96,6 +96,7 @@ export async function createManagedBrowserPage(
   const dispose = () =>
     (disposed ??= (async () => {
       revoked = true;
+      raw.interaction.stop();
       probe.dispose();
       await observation?.dispose().catch(() => undefined);
     })());
@@ -116,6 +117,7 @@ export async function createManagedBrowserPage(
     },
     async handoff() {
       revoked = true;
+      raw.interaction.stop();
       await Promise.allSettled([...active]);
       if (page.isClosed()) throw new Error("页面已关闭，无法移交");
       owner = "HUMAN";
@@ -135,6 +137,7 @@ export async function createManagedBrowserPage(
     closeByUser() {
       closing ??= (async () => {
         revoked = true;
+        raw.interaction.stop();
         await Promise.allSettled([...active]);
         await page.close();
         await dispose();

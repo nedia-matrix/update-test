@@ -1,3 +1,8 @@
+import {
+  PlatformDataOperationError,
+  scrollForNextJsonResponse,
+  navigateForJsonResponses,
+} from "@nedia-matrix/platform-sdk";
 import type {
   PlatformAccountProfileCapability,
   PlatformAccountProfileData,
@@ -141,13 +146,13 @@ export const xiaohongshuAccountProfileCapability: PlatformAccountProfileCapabili
   {
     implementationStatus: "reference-derived",
     async read(client) {
-      await client.navigate(PROFILE_PAGE_URL);
-      const response = await client.requestJson({
-        method: "GET",
-        url: PROFILE_API_URL,
-      });
-      if (!response.ok || response.body === null) {
-        throw new Error(`小红书账号资料请求失败（HTTP ${response.status}）`);
+      const [response] = await navigateForJsonResponses(
+        client,
+        PROFILE_PAGE_URL,
+        [{ method: "GET", url: PROFILE_API_URL, timeoutMs: 10_000 }],
+      );
+      if (!response?.ok || response.body === null) {
+        throw new Error("小红书账号资料响应未出现或请求失败");
       }
       return parseXiaohongshuAccountProfile(response.body);
     },
@@ -156,13 +161,11 @@ export const xiaohongshuAccountProfileCapability: PlatformAccountProfileCapabili
 export const xiaohongshuContentCapability: PlatformContentCapability = {
   implementationStatus: "reference-derived",
   async read(client): Promise<PlatformContentReadResult> {
-    const responsePromise = client.waitForJsonResponse({
-      method: "GET",
-      url: CONTENT_API_URL,
-      timeoutMs: 10_000,
-    });
-    await client.navigate(CONTENT_PAGE_URL);
-    const response = await responsePromise;
+    const [response] = await navigateForJsonResponses(
+      client,
+      CONTENT_PAGE_URL,
+      [{ method: "GET", url: CONTENT_API_URL, timeoutMs: 10_000 }],
+    );
     if (!response?.ok || response.body === null) {
       throw new Error("小红书作品列表首屏响应未出现");
     }
@@ -185,15 +188,27 @@ export const xiaohongshuContentCapability: PlatformContentCapability = {
     }
 
     while (pagesRead < MAX_CONTENT_PAGES) {
-      const nextResponsePromise = client.waitForJsonResponse({
-        method: "GET",
-        url: CONTENT_API_URL,
-        timeoutMs: NEXT_PAGE_TIMEOUT_MS,
-        replayObserved: false,
-      });
-      const scroll = await client.scrollToEnd({
-        selector: CONTENT_SCROLL_SELECTOR,
-      });
+      let nextPage: Awaited<ReturnType<typeof scrollForNextJsonResponse>>;
+      try {
+        nextPage = await scrollForNextJsonResponse(client, {
+          selector: CONTENT_SCROLL_SELECTOR,
+          response: {
+            method: "GET",
+            url: CONTENT_API_URL,
+            timeoutMs: NEXT_PAGE_TIMEOUT_MS,
+            replayObserved: false,
+          },
+        });
+      } catch (error) {
+        if (!(error instanceof PlatformDataOperationError)) throw error;
+        return partialContentResult(
+          items,
+          pagesRead,
+          remoteTotal,
+          `小红书作品第 ${pagesRead + 1} 页同步停止（${error.userMessage}）`,
+        );
+      }
+      const { scroll, response: nextResponse } = nextPage;
       if (!scroll.found) {
         return partialContentResult(
           items,
@@ -203,7 +218,6 @@ export const xiaohongshuContentCapability: PlatformContentCapability = {
         );
       }
 
-      const nextResponse = await nextResponsePromise;
       if (!nextResponse?.ok || nextResponse.body === null) {
         return partialContentResult(
           items,

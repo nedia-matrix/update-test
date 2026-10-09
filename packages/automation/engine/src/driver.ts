@@ -30,6 +30,11 @@ export interface EvidenceReference {
   readonly id: string;
   readonly capturedAt: string;
   readonly reason: string;
+  readonly mimeType?: string;
+  readonly byteSize?: number;
+  readonly relativeRef?: string;
+  readonly width?: number;
+  readonly height?: number;
 }
 
 export type AutomationKey = "Enter" | "Space";
@@ -39,6 +44,7 @@ export interface AutomationDriver {
   navigate(url: string): Promise<void>;
   wait(milliseconds: number): Promise<void>;
   query(candidate: LocatorCandidate): Promise<readonly ElementReference[]>;
+  prepareCommit?(): Promise<void>;
   click(target: ElementReference): Promise<void>;
   clickAtPosition(
     target: ElementReference,

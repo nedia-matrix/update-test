@@ -54,9 +54,14 @@ function fixture() {
         purpose,
         publicationId,
         owner: "AUTOMATION",
-        page: Object.assign(events, { isClosed: () => closed }),
+        page: Object.assign(events, {
+          isClosed: () => closed,
+          context: () => _browser.context,
+        }),
         driver: { navigate: vi.fn(async () => undefined) },
-        sessionProbeClient: {},
+        sessionProbeClient: {
+          fetchJson: vi.fn(async () => ({ status: 200, ok: true, body: {} })),
+        },
         observationSession: {},
         focus: vi.fn(async () => undefined),
         handoff: vi.fn(async () => {
@@ -93,6 +98,104 @@ function fixture() {
 }
 
 describe("isolated account browser sessions", () => {
+  it.each([
+    { status: 401, ok: false, body: {} },
+    { status: 403, ok: false, body: {} },
+    { status: 429, ok: false, body: {} },
+    { status: 503, ok: false, body: null },
+    { status: 200, ok: true, body: null },
+    { status: 200, ok: true, body: {} },
+  ])(
+    "does not navigate or retry an identity response $status with body $body",
+    async (response) => {
+      const f = fixture();
+      const sync = await f.host.openForVerification(account, platform);
+      const probe = f.pages[0].sessionProbeClient.fetchJson;
+      probe.mockResolvedValue(response);
+      try {
+        await expect(
+          sync.sessionProbeClient.fetchJson(
+            "https://creator.example.test/api/identity",
+          ),
+        ).resolves.toBe(response);
+        expect(probe).toHaveBeenCalledOnce();
+        expect(f.pages[0].driver.navigate).not.toHaveBeenCalled();
+      } finally {
+        await sync.close();
+      }
+    },
+  );
+
+  it.each([404, 405])(
+    "can navigate once and retry a compatibility response %s",
+    async (status) => {
+      const f = fixture();
+      const sync = await f.host.openForVerification(account, platform);
+      const probe = f.pages[0].sessionProbeClient.fetchJson;
+      const success = { status: 200, ok: true, body: { id: "external-1" } };
+      probe
+        .mockResolvedValueOnce({ status, ok: false, body: null })
+        .mockResolvedValueOnce(success);
+      try {
+        await expect(
+          sync.sessionProbeClient.fetchJson(
+            "https://creator.example.test/api/identity",
+          ),
+        ).resolves.toBe(success);
+        expect(probe).toHaveBeenCalledTimes(2);
+        expect(f.pages[0].driver.navigate).toHaveBeenCalledExactlyOnceWith(
+          platform.browser.startUrl,
+        );
+      } finally {
+        await sync.close();
+      }
+    },
+  );
+  it("records each browser candidate failure when opening an account page", async () => {
+    const f = fixture();
+    const failure = new Error("Unable to start a supported browser");
+    failure.name = "BrowserLaunchError";
+    Object.assign(failure, {
+      failures: [
+        { channel: "Google Chrome", message: "Executable not found" },
+        { channel: "Microsoft Edge", message: "Launch timed out" },
+      ],
+    });
+    f.deps.openContext.mockRejectedValueOnce(failure);
+    const events: Array<{
+      event: string;
+      details?: Readonly<Record<string, unknown>>;
+    }> = [];
+    const diagnostics = {
+      traceId: "trace-1",
+      bind: () => undefined,
+      report: (event: (typeof events)[number]) => events.push(event),
+    };
+
+    await expect(
+      f.host.openUserPage(account, platform, diagnostics),
+    ).rejects.toBe(failure);
+    expect(
+      events.filter(({ event }) => event === "browser.launch_candidate.failed"),
+    ).toMatchObject([
+      {
+        details: {
+          browserChannel: "Google Chrome",
+          message: "Executable not found",
+        },
+      },
+      {
+        details: {
+          browserChannel: "Microsoft Edge",
+          message: "Launch timed out",
+        },
+      },
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      event: "browser.context.open_failed",
+    });
+  });
+
   it("shares one cold headless context for concurrent syncs and closes only after both release", async () => {
     const f = fixture();
     const [a, b] = await Promise.all([
@@ -296,7 +399,9 @@ describe("isolated account browser sessions", () => {
     });
     expect(bind).toHaveBeenCalledWith({ pageId: "page-0" });
     expect(events).toEqual([
+      "browser.context.opening",
       "browser.context.opened",
+      "browser.page.opening",
       "browser.page.opened",
       "browser.page.closed",
     ]);

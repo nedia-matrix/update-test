@@ -62,10 +62,72 @@ export interface OpenApplicationUpdateDownloadRequest {
   version: string;
 }
 
-export interface FindAutomationTraceRequest {
+/** Main owns paths and URLs; the Renderer receives only presentation data. */
+export interface ApplicationUpdateState {
+  revision: number;
+  phase: "idle" | "checking" | "up-to-date" | "available" | "downloading" | "verifying" | "ready" | "failed";
+  currentVersion: string;
+  latestVersion?: string;
+  taskId?: string;
+  downloadAvailable: boolean;
+  receivedBytes: number;
+  totalBytes: number;
+  message?: string;
+  error?: { stage: "check" | "download"; retryable: boolean; message: string };
+}
+
+export interface FindDiagnosticTraceRequest {
   publicationId: string;
 }
 
-export interface AutomationTraceReference {
+export interface DiagnosticTraceReference {
   traceId: string;
+}
+
+export interface ReadDiagnosticTraceRequest {
+  traceId: string;
+  limit?: number;
+  afterSequence?: number;
+}
+
+export interface DiagnosticTraceRecord {
+  schemaVersion: number;
+  timestamp: string;
+  level: "debug" | "info" | "warn" | "error";
+  sequence: number;
+  traceId: string;
+  eventId: string;
+  operation: string;
+  component: string;
+  event: string;
+  details?: Readonly<Record<string, unknown>>;
+  attachmentIds?: readonly string[];
+}
+
+export interface ReadDiagnosticAttachmentRequest {
+  traceId: string;
+  attachmentId: string;
+}
+
+export interface DiagnosticAttachment {
+  id: string;
+  traceId: string;
+  eventId: string;
+  kind: "screenshot";
+  mimeType: "image/png";
+  relativeRef: string;
+  capturedAt: string;
+  reasonCode: string;
+  byteSize: number;
+  width?: number;
+  height?: number;
+  dataBase64: string;
+}
+
+export interface ExportDiagnosticTraceRequest {
+  traceId: string;
+}
+
+export interface ExportDiagnosticTraceResult {
+  exported: boolean;
 }

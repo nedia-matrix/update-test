@@ -9,6 +9,10 @@ export class AccountPublicationLock {
     return this.activeAccountIds.has(accountId);
   }
 
+  hasAnyActive(): boolean {
+    return this.activeAccountIds.size > 0;
+  }
+
   acquire(accountId: string): AccountPublicationLease | null {
     if (this.activeAccountIds.has(accountId)) return null;
     this.activeAccountIds.add(accountId);

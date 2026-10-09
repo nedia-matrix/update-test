@@ -35,14 +35,23 @@ async function fixture(options?: {
   const assetStore = new ContentAddressedPublicationAssetStore(
     join(root, "assets"),
   );
+  const diagnosticEvents: string[] = [];
   const downloader = new RemoteAssetDownloader({
     assetStore,
     stagingRoot: join(root, "staging"),
     fetch,
     maxAssetBytes: options?.maxAssetBytes,
     resolveHost: async () => ["203.0.113.10"],
+    diagnostics: {
+      start: () => ({
+        traceId: "trace-1",
+        bind: () => undefined,
+        report: ({ event }) => diagnosticEvents.push(event),
+        finish: ({ outcome }) => diagnosticEvents.push(`finish:${outcome}`),
+      }),
+    },
   });
-  return { assetStore, downloader, fetch, root };
+  return { assetStore, diagnosticEvents, downloader, fetch, root };
 }
 
 function image(
@@ -61,7 +70,7 @@ function image(
 
 describe("RemoteAssetDownloader", () => {
   it("archives a validated asset without retaining its signed URL", async () => {
-    const { assetStore, downloader } = await fixture();
+    const { assetStore, diagnosticEvents, downloader } = await fixture();
 
     const [downloaded] = await downloader.download("request-1", [image()]);
 
@@ -75,6 +84,7 @@ describe("RemoteAssetDownloader", () => {
     expect(downloaded?.localRelativePath).toMatch(
       /^sha256\/[a-f0-9]{2}\/[a-f0-9]{64}\.png$/,
     );
+    expect(downloaded).not.toHaveProperty("statusCode");
     await expect(readFile(downloaded!.resourceReference)).resolves.toEqual(png);
     await expect(assetStore.list()).resolves.toEqual([
       {
@@ -83,6 +93,12 @@ describe("RemoteAssetDownloader", () => {
       },
     ]);
     expect(JSON.stringify(downloaded)).not.toContain("temporary=secret");
+    expect(diagnosticEvents).toEqual([
+      "asset.download.started",
+      "asset.download.item_started",
+      "asset.download.item_completed",
+      "finish:completed",
+    ]);
   });
 
   it("deduplicates identical content across requests", async () => {

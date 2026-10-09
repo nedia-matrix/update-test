@@ -16,6 +16,8 @@ import {
 } from "./account-identity-service.js";
 import type {
   AccountRepository,
+  AccountDiagnosticPort,
+  AccountDiagnosticTrace,
   BrowserSessionPort,
   PlatformCatalog,
   SessionDetectionPort,
@@ -90,6 +92,7 @@ export interface AccountServiceDependencies {
   onAccountsChanged?: (() => void) | undefined;
   recognitionIntervalMs?: number | undefined;
   recognitionMaxAttempts?: number | undefined;
+  diagnostics?: AccountDiagnosticPort | undefined;
 }
 
 export class AccountReplacedError extends Error {
@@ -137,6 +140,8 @@ export class AccountService {
       accountStore: dependencies.accountStore,
       browserSessions: dependencies.browserSessions,
       now: this.now,
+      diagnostics: dependencies.diagnostics,
+      createId: this.createId,
     });
     this.identities = new AccountIdentityService({
       platforms: dependencies.platforms,
@@ -274,13 +279,25 @@ export class AccountService {
         `Unknown platform login entry: ${request.loginEntryId}`,
       );
     }
-    const opened = await this.dependencies.browserSessions.openForLogin(
-      account,
-      platform,
-      loginEntry,
+    const trace = this.startDiagnosticTrace(
+      "account.browser_open",
+      account.id,
+      platform.id,
     );
-    this.startAutomaticRecognition(account.id, platform, opened);
-    return { profileId: account.profileId };
+    try {
+      const opened = await this.dependencies.browserSessions.openForLogin(
+        account,
+        platform,
+        loginEntry,
+        trace,
+      );
+      this.startAutomaticRecognition(account.id, platform, opened);
+      this.finishDiagnostic(trace, { outcome: "completed" });
+      return { profileId: account.profileId };
+    } catch (error) {
+      this.reportBrowserOpenFailure(trace, error);
+      throw error;
+    }
   }
 
   async openAccount(request: PlatformAccountRequest) {
@@ -289,21 +306,34 @@ export class AccountService {
     const { account } = this.resolveAccount(request);
     const platform = this.dependencies.platforms.require(account.platformId);
     const loginEntry = platform.accounts.loginEntries[0];
-    const opened =
-      account.status !== "authenticated" &&
-      loginEntry &&
-      !this.dependencies.isAccountBusy?.(account.id)
-        ? await this.dependencies.browserSessions.openForLogin(
-            account,
-            platform,
-            loginEntry,
-          )
-        : await this.dependencies.browserSessions.openUserPage(
-            account,
-            platform,
-          );
-    this.startAutomaticRecognition(account.id, platform, opened);
-    return { sessionId: opened.id, profileId: opened.profileId };
+    const trace = this.startDiagnosticTrace(
+      "account.browser_open",
+      account.id,
+      platform.id,
+    );
+    try {
+      const opened =
+        account.status !== "authenticated" &&
+        loginEntry &&
+        !this.dependencies.isAccountBusy?.(account.id)
+          ? await this.dependencies.browserSessions.openForLogin(
+              account,
+              platform,
+              loginEntry,
+              trace,
+            )
+          : await this.dependencies.browserSessions.openUserPage(
+              account,
+              platform,
+              trace,
+            );
+      this.startAutomaticRecognition(account.id, platform, opened);
+      this.finishDiagnostic(trace, { outcome: "completed" });
+      return { sessionId: opened.id, profileId: opened.profileId };
+    } catch (error) {
+      this.reportBrowserOpenFailure(trace, error);
+      throw error;
+    }
   }
 
   async refreshAccount(request: PlatformAccountRequest) {
@@ -320,53 +350,106 @@ export class AccountService {
       throw new Error("请先完成平台账号登录识别");
     }
     const platform = this.dependencies.platforms.require(account.platformId);
-    const accountProfile = platform.accountProfile;
-    if (!accountProfile) throw new Error("该平台暂不支持账号资料刷新");
-    const profile = await this.withVerificationTransition(
+    const trace = this.startDiagnosticTrace(
+      "account.profile_refresh",
       account.id,
-      async () => {
-        const verification =
-          await this.dependencies.browserSessions.openForVerification(
-            account,
-            platform,
-          );
-        try {
-          const detected = await this.sessionDetector(
-            platform.accounts.detection,
-            verification.driver,
-            verification.sessionProbeClient,
-          );
-          const verified = this.identities.recordEstablished(
-            this.dependencies.accountStore.require(account.id),
-            detected,
-          );
-          if (verified.status !== "authenticated") {
-            throw new Error(
-              verified.status === "login_required"
-                ? "平台账号未登录"
-                : verified.reason,
-            );
-          }
-          return await accountProfile.read(verification.dataClient);
-        } finally {
-          await verification.close();
-        }
-      },
+      account.platformId,
     );
-    this.assertAvailable(account.id);
-    const current = this.dependencies.accountStore.require(account.id);
-    if (
-      current.identityScheme !== account.identityScheme ||
-      current.externalAccountId !== account.externalAccountId
-    ) {
-      throw new Error("账号身份在资料刷新期间发生变化");
+    try {
+      const accountProfile = platform.accountProfile;
+      if (!accountProfile) throw new Error("该平台暂不支持账号资料刷新");
+      const profile = await this.withVerificationTransition(
+        account.id,
+        async () => {
+          const verification =
+            await this.dependencies.browserSessions.openForVerification(
+              account,
+              platform,
+              trace,
+            );
+          try {
+            this.reportDiagnostic(trace, {
+              component: "session",
+              event: "session.detection.started",
+              details: { phase: "account_profile_refresh" },
+            });
+            const detected = await this.sessionDetector(
+              platform.accounts.detection,
+              verification.driver,
+              verification.sessionProbeClient,
+            );
+            this.reportDiagnostic(trace, {
+              component: "session",
+              event: "session.detection.completed",
+              details: {
+                phase: "account_profile_refresh",
+                status: detected.status,
+              },
+            });
+            const verified = this.identities.recordEstablished(
+              this.dependencies.accountStore.require(account.id),
+              detected,
+            );
+            if (verified.status !== "authenticated") {
+              throw new Error(
+                verified.status === "login_required"
+                  ? "平台账号未登录"
+                  : verified.reason,
+              );
+            }
+            this.reportDiagnostic(trace, {
+              component: "account",
+              event: "account.profile_reader.started",
+            });
+            const result = await accountProfile.read(verification.dataClient);
+            this.reportDiagnostic(trace, {
+              component: "account",
+              event: "account.profile_reader.completed",
+              details: { count: profileItems(result).length },
+            });
+            return result;
+          } finally {
+            await verification.close();
+          }
+        },
+      );
+      this.assertAvailable(account.id);
+      const current = this.dependencies.accountStore.require(account.id);
+      if (
+        current.identityScheme !== account.identityScheme ||
+        current.externalAccountId !== account.externalAccountId
+      ) {
+        throw new Error("账号身份在资料刷新期间发生变化");
+      }
+      const aggregate = PlatformAccount.rehydrate(current);
+      aggregate.updateProfile(profileItems(profile), this.now().toISOString());
+      const snapshot = aggregate.toSnapshot();
+      this.dependencies.accountStore.put(snapshot);
+      this.reportDiagnostic(trace, {
+        component: "account",
+        event: "account.profile.persisted",
+        details: { count: snapshot.accountInfo?.length ?? 0 },
+      });
+      this.finishDiagnostic(trace, { outcome: "completed" });
+      this.dependencies.onAccountsChanged?.();
+      return toPlatformAccountView(snapshot);
+    } catch (error) {
+      this.reportDiagnostic(trace, {
+        component: "account",
+        event: "account.profile_refresh.failed",
+        level: "error",
+        details: {
+          code: "ACCOUNT_PROFILE_REFRESH_FAILED",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          message: error instanceof Error ? error.message : "账号资料刷新失败",
+        },
+      });
+      this.finishDiagnostic(trace, {
+        outcome: "failed",
+        message: error instanceof Error ? error.message : "账号资料刷新失败",
+      });
+      throw error;
     }
-    const aggregate = PlatformAccount.rehydrate(current);
-    aggregate.updateProfile(profileItems(profile), this.now().toISOString());
-    const snapshot = aggregate.toSnapshot();
-    this.dependencies.accountStore.put(snapshot);
-    this.dependencies.onAccountsChanged?.();
-    return toPlatformAccountView(snapshot);
   }
 
   updateContentCount(
@@ -427,49 +510,169 @@ export class AccountService {
     const { account } = this.resolveAccount(request);
     this.cancelAutomaticRecognition(account.id);
     const platform = this.dependencies.platforms.require(account.platformId);
-    const detected: SessionDetection = await this.withVerificationTransition(
+    const trace = this.startDiagnosticTrace(
+      "account.verify",
       account.id,
-      async () => {
-        const verification =
-          await this.dependencies.browserSessions.openForVerification(
-            account,
-            platform,
-          );
-        try {
-          return await this.sessionDetector(
-            platform.accounts.detection,
-            verification.driver,
-            verification.sessionProbeClient,
-          );
-        } finally {
-          await verification.close();
-        }
-      },
-    ).catch((error: unknown): SessionDetection => ({
-      status: "unknown",
-      reason: error instanceof Error ? error.message : "账号同步失败",
-    }));
+      account.platformId,
+    );
+    try {
+      this.reportDiagnostic(trace, {
+        component: "session",
+        event: "session.detection.started",
+        details: {
+          phase: allowIdentityChange ? "identity_refresh" : "identity_verify",
+        },
+      });
+      const detected: SessionDetection = await this.withVerificationTransition(
+        account.id,
+        async () => {
+          const verification =
+            await this.dependencies.browserSessions.openForVerification(
+              account,
+              platform,
+              trace,
+            );
+          try {
+            return await this.sessionDetector(
+              platform.accounts.detection,
+              verification.driver,
+              verification.sessionProbeClient,
+            );
+          } finally {
+            await verification.close();
+          }
+        },
+      ).catch((error: unknown): SessionDetection => {
+        this.reportDiagnostic(trace, {
+          component: "session",
+          event: "session.detection.failed",
+          level: "error",
+          details: {
+            code: "ACCOUNT_DETECTION_FAILED",
+            errorName: error instanceof Error ? error.name : "UnknownError",
+            message: error instanceof Error ? error.message : "账号同步失败",
+          },
+        });
+        return {
+          status: "unknown",
+          reason: error instanceof Error ? error.message : "账号同步失败",
+        };
+      });
+      this.reportDiagnostic(trace, {
+        component: "session",
+        event: "session.detection.completed",
+        details: {
+          phase: allowIdentityChange ? "identity_refresh" : "identity_verify",
+          status: detected.status,
+          ...(detected.status === "unknown" ? {} : { source: detected.source }),
+        },
+      });
 
-    this.assertAvailable(account.id);
-    if (!this.dependencies.accountStore.get(account.id))
-      throw new Error("Account was removed during verification");
-    let recorded: SessionDetection;
-    if (
-      account.lifecycle === "pending_identity" &&
-      detected.status === "authenticated"
-    ) {
-      recorded = (
-        await this.identities.reconcileCandidate(account.id, detected)
-      ).detection;
-    } else if (
-      allowIdentityChange &&
-      !this.dependencies.isAccountBusy?.(account.id)
-    ) {
-      recorded = this.identities.recordRefresh(account, detected);
-    } else {
-      recorded = this.identities.recordEstablished(account, detected);
+      this.assertAvailable(account.id);
+      if (!this.dependencies.accountStore.get(account.id))
+        throw new Error("Account was removed during verification");
+      let recorded: SessionDetection;
+      if (
+        account.lifecycle === "pending_identity" &&
+        detected.status === "authenticated"
+      ) {
+        recorded = (
+          await this.identities.reconcileCandidate(account.id, detected)
+        ).detection;
+      } else if (
+        allowIdentityChange &&
+        !this.dependencies.isAccountBusy?.(account.id)
+      ) {
+        recorded = this.identities.recordRefresh(account, detected);
+      } else {
+        recorded = this.identities.recordEstablished(account, detected);
+      }
+      this.reportDiagnostic(trace, {
+        component: "account",
+        event: "account.identity.persisted",
+        details: { status: recorded.status },
+      });
+      this.finishDiagnostic(trace, { outcome: recorded.status });
+      return recorded;
+    } catch (error) {
+      this.reportDiagnostic(trace, {
+        component: "account",
+        event: "account.identity.failed",
+        level: "error",
+        details: {
+          code: "ACCOUNT_IDENTITY_PERSIST_FAILED",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          message: error instanceof Error ? error.message : "账号身份处理失败",
+        },
+      });
+      this.finishDiagnostic(trace, {
+        outcome: "failed",
+        message: error instanceof Error ? error.message : "账号身份处理失败",
+      });
+      throw error;
     }
-    return recorded;
+  }
+
+  private startDiagnosticTrace(
+    operation:
+      "account.verify" | "account.profile_refresh" | "account.browser_open",
+    accountId: string,
+    platformId: string,
+  ): AccountDiagnosticTrace | undefined {
+    try {
+      return this.dependencies.diagnostics?.start({
+        operation,
+        accountId,
+        platformId,
+        requestId: this.createId(),
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  private reportBrowserOpenFailure(
+    trace: AccountDiagnosticTrace | undefined,
+    error: unknown,
+  ): void {
+    this.reportDiagnostic(trace, {
+      component: "account",
+      event: "account.browser_open.failed",
+      level: "error",
+      details: {
+        code: "ACCOUNT_BROWSER_OPEN_FAILED",
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message:
+          error instanceof Error && error.name === "BrowserLaunchError"
+            ? "All supported browser launch candidates failed"
+            : error instanceof Error
+              ? error.message
+              : "Unable to open account browser",
+      },
+    });
+    this.finishDiagnostic(trace, { outcome: "failed" });
+  }
+
+  private reportDiagnostic(
+    trace: AccountDiagnosticTrace | undefined,
+    event: Parameters<AccountDiagnosticTrace["report"]>[0],
+  ): void {
+    try {
+      trace?.report(event);
+    } catch {
+      // Diagnostics must not affect account operations.
+    }
+  }
+
+  private finishDiagnostic(
+    trace: AccountDiagnosticTrace | undefined,
+    result: Parameters<AccountDiagnosticTrace["finish"]>[0],
+  ): void {
+    try {
+      trace?.finish(result);
+    } catch {
+      // Diagnostics must not affect account operations.
+    }
   }
 
   private startAutomaticRecognition(

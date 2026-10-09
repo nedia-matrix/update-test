@@ -47,6 +47,49 @@ function accountResponse(body: string) {
 }
 
 describe("Playwright session response probes", () => {
+  it("resolves a detector registered after headers arrive while the body is pending", async () => {
+    const { client, pageEvents } = fixture();
+    let complete!: (body: Buffer) => void;
+    pageEvents.emit("response", {
+      ...accountResponse("{}"),
+      body: () =>
+        new Promise<Buffer>((resolve) => {
+          complete = resolve;
+        }),
+    });
+    const waiting = client.waitForJsonResponse({
+      method: "POST",
+      url: "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo",
+      timeoutMs: 100,
+    });
+    complete(Buffer.from('{"data":{"userId":"42"}}'));
+    await expect(waiting).resolves.toMatchObject({
+      status: 200,
+      body: { data: { userId: "42" } },
+    });
+    client.dispose();
+  });
+
+  it("disposes a waiter even while its response body is still pending", async () => {
+    const { client, pageEvents } = fixture();
+    const waiting = client.waitForJsonResponse({
+      method: "POST",
+      url: "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo",
+      timeoutMs: 10_000,
+    });
+    let complete!: (body: Buffer) => void;
+    pageEvents.emit("response", {
+      ...accountResponse("{}"),
+      body: () =>
+        new Promise<Buffer>((resolve) => {
+          complete = resolve;
+        }),
+    });
+    client.dispose();
+    await expect(waiting).resolves.toBeNull();
+    complete(Buffer.from('{"data":{"userId":"42"}}'));
+    expect(pageEvents.listenerCount("response")).toBe(0);
+  });
   it("matches method, origin and path while ignoring query parameters", async () => {
     const { client, pageEvents } = fixture();
     const waiting = client.waitForJsonResponse({

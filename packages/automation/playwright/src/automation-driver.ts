@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
-import { basename, extname, isAbsolute, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute } from "node:path";
 
 import type {
   AutomationKey,
@@ -9,15 +9,20 @@ import type {
   EvidenceReference,
   LocatorCandidate,
 } from "@nedia-matrix/automation-engine";
+import { DiagnosticAttachmentStore } from "@nedia-matrix/diagnostics";
 import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-sdk";
 import type { ElementHandle, FileChooser, Locator, Page } from "playwright";
 
+import {
+  HumanInteractionSession,
+  pageInteractionSession,
+  sampleTiming,
+} from "./human-interaction.js";
 import { isAllowedPlatformNavigation } from "./navigation-policy.js";
 
 const MAX_ELEMENT_REFERENCES = 500;
 const MAX_QUERY_MATCHES = 100;
 const SHADOW_CLICK_MARKER = "data-nedia-shadow-click";
-const TYPING_DELAY_MS = 20;
 const INPUT_SETTLE_MS = 100;
 const FILE_CHOOSER_TIMEOUT_MS = 5_000;
 
@@ -145,10 +150,6 @@ async function focusAtTextEnd(locator: Locator): Promise<void> {
   });
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
-}
-
 function normalizeFilledText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
@@ -188,7 +189,12 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     private readonly page: Page,
     private readonly browser: PlatformBrowserPolicy,
     private readonly evidenceDirectory: string,
+    private readonly providedInteraction?: HumanInteractionSession,
   ) {}
+
+  get interaction(): HumanInteractionSession {
+    return this.providedInteraction ?? pageInteractionSession(this.page);
+  }
 
   async currentUrl(): Promise<string> {
     return this.page.url();
@@ -198,11 +204,17 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     if (!isAllowedPlatformNavigation(url, this.browser)) {
       throw new Error("Navigation target is outside the platform boundary");
     }
-    await this.page.goto(url, { waitUntil: "domcontentloaded" });
+    await this.interaction.run(async () => {
+      await this.page.goto(url, {
+        waitUntil: "domcontentloaded",
+        signal: this.interaction.signal,
+      });
+      await this.interaction.pause("navigate");
+    });
   }
 
   async wait(milliseconds: number): Promise<void> {
-    await delay(milliseconds);
+    await this.interaction.wait(milliseconds);
   }
 
   async query(
@@ -222,7 +234,9 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
   }
 
   async click(target: ElementReference): Promise<void> {
-    await this.locatorFor(target).click();
+    await this.interaction.run(() =>
+      this.interaction.click(this.locatorFor(target)),
+    );
   }
 
   async clickAtPosition(
@@ -230,16 +244,20 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     xRatio: number,
     yRatio: number,
   ): Promise<void> {
-    const locator = this.locatorFor(target);
-    await locator.scrollIntoViewIfNeeded();
-    const box = await locator.boundingBox();
-    if (!box || box.width <= 0 || box.height <= 0) {
-      throw new Error("target_has_no_clickable_box");
+    if (
+      ![xRatio, yRatio].every(
+        (value) => Number.isFinite(value) && value >= 0 && value <= 1,
+      )
+    ) {
+      throw new TypeError("Click ratio must be between zero and one");
     }
-    await this.page.mouse.click(
-      box.x + box.width * xRatio,
-      box.y + box.height * yRatio,
+    await this.interaction.run(() =>
+      this.interaction.click(this.locatorFor(target), { x: xRatio, y: yRatio }),
     );
+  }
+
+  async prepareCommit(): Promise<void> {
+    await this.interaction.run(() => this.interaction.pause("submit"));
   }
 
   async clickClosedShadowDescendant(
@@ -247,183 +265,233 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     descendantTag: string,
     descendantClass: string,
   ): Promise<void> {
-    const locator = this.locatorFor(target);
-    const marker = randomUUID();
-    await locator.evaluate(
-      (element, input) => element.setAttribute(input.name, input.value),
-      { name: SHADOW_CLICK_MARKER, value: marker },
-    );
-    const cdp = await this.page.context().newCDPSession(this.page);
-    try {
-      const { root } = await cdp.send("DOM.getDocument", {
-        depth: -1,
-        pierce: true,
-      });
-      const descendant = findClosedShadowDescendant(
-        root as CdpDomNode,
-        marker,
-        descendantTag,
-        descendantClass,
+    await this.interaction.run(async () => {
+      const locator = this.locatorFor(target);
+      const marker = randomUUID();
+      await locator.evaluate(
+        (element, input) => element.setAttribute(input.name, input.value),
+        { name: SHADOW_CLICK_MARKER, value: marker },
       );
-      if (!descendant) throw new Error("closed_shadow_target_not_found");
-      const { model } = await cdp.send("DOM.getBoxModel", {
-        nodeId: descendant.nodeId,
-      });
-      const [x1, y1, x2, y2, x3, y3, x4, y4] = model.content;
-      if ([x1, y1, x2, y2, x3, y3, x4, y4].some((value) => value == null)) {
-        throw new Error("closed_shadow_target_has_no_box");
+      const cdp = await this.page.context().newCDPSession(this.page);
+      try {
+        const { root } = await cdp.send("DOM.getDocument", {
+          depth: -1,
+          pierce: true,
+        });
+        const descendant = findClosedShadowDescendant(
+          root as CdpDomNode,
+          marker,
+          descendantTag,
+          descendantClass,
+        );
+        if (!descendant) throw new Error("closed_shadow_target_not_found");
+        const { model } = await cdp.send("DOM.getBoxModel", {
+          nodeId: descendant.nodeId,
+        });
+        const [x1, y1, x2, y2, x3, y3, x4, y4] = model.content;
+        if ([x1, y1, x2, y2, x3, y3, x4, y4].some((value) => value == null)) {
+          throw new Error("closed_shadow_target_has_no_box");
+        }
+        const u = 0.4 + this.interaction.random() * 0.2;
+        const v = 0.4 + this.interaction.random() * 0.2;
+        const x =
+          (1 - u) * (1 - v) * x1! +
+          u * (1 - v) * x2! +
+          u * v * x3! +
+          (1 - u) * v * x4!;
+        const y =
+          (1 - u) * (1 - v) * y1! +
+          u * (1 - v) * y2! +
+          u * v * y3! +
+          (1 - u) * v * y4!;
+        const deadline = Date.now() + 30_000;
+        await this.interaction.move({ x, y }, deadline);
+        await this.interaction.pause("pointer", deadline);
+        const { object } = await cdp.send("DOM.resolveNode", {
+          nodeId: descendant.nodeId,
+          objectGroup: marker,
+        });
+        if (!object.objectId) throw new Error("closed_shadow_target_detached");
+        const { result } = await cdp.send("Runtime.callFunctionOn", {
+          objectId: object.objectId,
+          functionDeclaration: `function(x, y) {
+          const rect = this.getBoundingClientRect();
+          for (let candidate = this; candidate;) {
+            const root = candidate.getRootNode();
+            const hit = root.elementFromPoint(x, y);
+            if (!hit || !(candidate === hit || candidate.contains(hit))) return false;
+            candidate = root.host || null;
+          }
+          let opacity = 1;
+          for (let el = this; el; el = el.parentElement || el.getRootNode().host) {
+            const style = getComputedStyle(el);
+            if (style.display === "none" || style.visibility !== "visible") return false;
+            opacity *= Number(style.opacity);
+          }
+          return opacity >= 0.1 && !this.disabled && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+        }`,
+          arguments: [{ value: x }, { value: y }],
+          returnByValue: true,
+        });
+        if (result.value !== true)
+          throw new Error("closed_shadow_target_moved_or_obscured");
+        this.interaction.check(deadline);
+        await this.page.mouse.click(x, y, {
+          delay: sampleTiming("hold", this.interaction.random),
+        });
+      } finally {
+        await cdp
+          .send("Runtime.releaseObjectGroup", { objectGroup: marker })
+          .catch(() => undefined);
+        await cdp.detach().catch(() => undefined);
+        await locator
+          .evaluate(
+            (element, name) => element.removeAttribute(name),
+            SHADOW_CLICK_MARKER,
+          )
+          .catch(() => undefined);
       }
-      const x = (x1! + x2! + x3! + x4!) / 4;
-      const y = (y1! + y2! + y3! + y4!) / 4;
-      await this.page.mouse.click(x, y);
-    } finally {
-      await cdp.detach().catch(() => undefined);
-      await locator
-        .evaluate(
-          (element, name) => element.removeAttribute(name),
-          SHADOW_CLICK_MARKER,
-        )
-        .catch(() => undefined);
-    }
+    });
   }
 
   async fill(target: ElementReference, value: string): Promise<void> {
-    const locator = this.locatorFor(target);
-    const contentEditable = await locator.evaluate(
-      (element) => element.getAttribute("contenteditable") === "true",
-    );
-    await locator.click();
-    await delay(INPUT_SETTLE_MS);
-    await locator.press("ControlOrMeta+A");
-    await locator.press("Backspace");
-    const deadline =
-      Date.now() + 30_000 + Array.from(value).length * TYPING_DELAY_MS * 2;
-    for (const part of value.match(/ +|[^ ]+/g) ?? []) {
-      if (part.startsWith(" ")) {
-        // Body spaces are text, not Space shortcuts that rich editors use to commit topics.
-        // Insert one at a time to preserve the normal typing pace and input event granularity.
-        await locator.focus();
-        for (const space of part) {
-          await this.page.keyboard.insertText(space);
-          await delay(TYPING_DELAY_MS);
-        }
-      } else {
-        await locator.pressSequentially(part, {
-          delay: TYPING_DELAY_MS,
-          timeout: Math.max(1, deadline - Date.now()),
-        });
-      }
-    }
-    await delay(contentEditable ? 500 : 50);
-    await locator.blur();
-    await delay(50);
-
-    let actual: string | null;
-    if (contentEditable) {
-      actual = await locator.evaluate((element) => {
-        const innerText = Reflect.get(element, "innerText");
-        if (typeof innerText === "string") return innerText;
-        return element.textContent;
-      });
-    } else {
-      actual = await locator.inputValue().catch(() => null);
-    }
-    if (
-      typeof actual !== "string" ||
-      normalizeFilledText(actual) !== normalizeFilledText(value)
-    ) {
-      const actualLength =
-        typeof actual === "string" ? normalizeFilledText(actual).length : 0;
-      throw new Error(
-        `filled_value_mismatch(expected_length=${normalizeFilledText(value).length}, actual_length=${actualLength})`,
+    await this.interaction.run(async () => {
+      const locator = this.locatorFor(target);
+      const contentEditable = await locator.evaluate(
+        (element) => element.getAttribute("contenteditable") === "true",
       );
-    }
+      await this.interaction.click(locator);
+      await this.interaction.wait(INPUT_SETTLE_MS);
+      await locator.press("ControlOrMeta+A");
+      await locator.press("Backspace");
+      await this.interaction.type(locator, value);
+      await this.interaction.wait(contentEditable ? 500 : 50);
+      await locator.blur();
+      await this.interaction.wait(50);
+
+      let actual: string | null;
+      if (contentEditable) {
+        actual = await locator.evaluate((element) => {
+          const innerText = Reflect.get(element, "innerText");
+          if (typeof innerText === "string") return innerText;
+          return element.textContent;
+        });
+      } else {
+        actual = await locator.inputValue().catch(() => null);
+      }
+      if (
+        typeof actual !== "string" ||
+        normalizeFilledText(actual) !== normalizeFilledText(value)
+      ) {
+        const actualLength =
+          typeof actual === "string" ? normalizeFilledText(actual).length : 0;
+        throw new Error(
+          `filled_value_mismatch(expected_length=${normalizeFilledText(value).length}, actual_length=${actualLength})`,
+        );
+      }
+    });
   }
 
   async typeText(
     target: ElementReference,
     value: string,
-    delayMs = TYPING_DELAY_MS,
+    delayMs?: number,
   ): Promise<void> {
-    const locator = this.locatorFor(target);
-    await focusAtTextEnd(locator);
-    await delay(INPUT_SETTLE_MS);
-    await locator.pressSequentially(value, {
-      delay: delayMs,
-      timeout: 30_000 + Array.from(value).length * delayMs * 2,
+    await this.interaction.run(async () => {
+      const locator = this.locatorFor(target);
+      await focusAtTextEnd(locator);
+      await this.interaction.wait(INPUT_SETTLE_MS);
+      await this.interaction.type(locator, value, delayMs);
     });
   }
 
   async pressKey(target: ElementReference, key: AutomationKey): Promise<void> {
-    const locator = this.locatorFor(target);
-    await focusAtTextEnd(locator);
-    await delay(INPUT_SETTLE_MS);
-    await locator.press(key);
+    await this.interaction.run(async () => {
+      const locator = this.locatorFor(target);
+      await focusAtTextEnd(locator);
+      await this.interaction.wait(INPUT_SETTLE_MS);
+      this.interaction.check();
+      await locator.press(key);
+    });
   }
 
   async uploadFiles(
     target: ElementReference,
     filePaths: readonly string[],
   ): Promise<void> {
-    assertAbsoluteFilePaths(filePaths);
-    const input = this.locatorFor(target);
-    // Only standard HTML associations are inferred; custom upload buttons are not guessed.
-    const handle = await input.evaluateHandle((element) => {
-      const fileInput = element as unknown as {
-        tagName: string;
-        type: string;
-        disabled: boolean;
-        labels?: ArrayLike<typeof element>;
-      };
-      if (
-        fileInput.tagName !== "INPUT" ||
-        fileInput.type !== "file" ||
-        fileInput.disabled
-      )
-        return null;
-      return (
-        [...Array.from(fileInput.labels ?? []), element].find((candidate) => {
-          const style =
-            candidate.ownerDocument.defaultView?.getComputedStyle(candidate);
-          const rect = candidate.getBoundingClientRect();
-          return (
-            style &&
-            style.visibility !== "hidden" &&
-            style.visibility !== "collapse" &&
-            style.pointerEvents !== "none" &&
-            rect.width > 0 &&
-            rect.height > 0
-          );
-        }) ?? null
-      );
-    });
-    try {
-      const trigger = handle.asElement();
-      // A visible file input may sit underneath a custom upload button. Trial
-      // checks actionability without clicking or opening a chooser.
-      let clickable = false;
-      if (trigger) {
-        try {
-          await trigger.click({
-            trial: true,
-            timeout: FILE_CHOOSER_TIMEOUT_MS,
-          });
-          clickable = true;
-        } catch (error) {
-          if (!(error instanceof Error) || error.name !== "TimeoutError") {
-            throw error;
+    await this.interaction.run(async () => {
+      assertAbsoluteFilePaths(filePaths);
+      const input = this.locatorFor(target);
+      // Only standard HTML associations are inferred; custom upload buttons are not guessed.
+      const handle = await input.evaluateHandle((element) => {
+        const fileInput = element as unknown as {
+          tagName: string;
+          type: string;
+          disabled: boolean;
+          labels?: ArrayLike<typeof element>;
+        };
+        if (
+          fileInput.tagName !== "INPUT" ||
+          fileInput.type !== "file" ||
+          fileInput.disabled
+        )
+          return null;
+        return (
+          [...Array.from(fileInput.labels ?? []), element].find((candidate) => {
+            const style =
+              candidate.ownerDocument.defaultView?.getComputedStyle(candidate);
+            const rect = candidate.getBoundingClientRect();
+            return (
+              style &&
+              style.visibility !== "hidden" &&
+              style.visibility !== "collapse" &&
+              style.pointerEvents !== "none" &&
+              rect.width > 0 &&
+              rect.height > 0
+            );
+          }) ?? null
+        );
+      });
+      try {
+        const trigger = handle.asElement();
+        // Preflight cannot use trial click: it moves the mouse before our curve.
+        // Check the visible standard trigger without sending pointer input.
+        let clickable = false;
+        if (trigger) {
+          try {
+            const deadline = Date.now() + FILE_CHOOSER_TIMEOUT_MS;
+            await trigger.scrollIntoViewIfNeeded({
+              timeout: FILE_CHOOSER_TIMEOUT_MS,
+              signal: this.interaction.signal,
+            });
+            const box = await trigger.boundingBox();
+            if (box) {
+              await this.interaction.verifyPoint(
+                trigger,
+                { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+                deadline,
+              );
+              clickable = true;
+            }
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              (error.name !== "TimeoutError" &&
+                error.message !== "click_target_moved_or_obscured")
+            )
+              throw error;
           }
         }
+        if (!trigger || !clickable) {
+          await this.interaction.wait(INPUT_SETTLE_MS);
+          await input.setInputFiles([...filePaths]);
+          return;
+        }
+        await this.uploadThroughChooser(input, trigger, filePaths);
+      } finally {
+        await handle.dispose();
       }
-      if (!trigger || !clickable) {
-        await delay(INPUT_SETTLE_MS);
-        await input.setInputFiles([...filePaths]);
-        return;
-      }
-      await this.uploadThroughChooser(input, trigger, filePaths);
-    } finally {
-      await handle.dispose();
-    }
+    });
   }
 
   private async uploadThroughChooser(
@@ -434,7 +502,6 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     let onChooser!: (chooser: FileChooser) => void;
     let onClose!: () => void;
     let cancelWait!: (error: Error) => void;
-    const controller = new AbortController();
     let timer!: ReturnType<typeof setTimeout>;
     const chooserPromise = new Promise<FileChooser>((resolve, reject) => {
       cancelWait = reject;
@@ -443,17 +510,16 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
       this.page.on("filechooser", onChooser);
       this.page.on("close", onClose);
     });
+    const onAbort = () => cancelWait(new Error("file_chooser_cancelled"));
+    this.interaction.signal.addEventListener("abort", onAbort, { once: true });
     try {
       // Attach both rejection handlers before clicking; either operation may fail first.
       const [chooser] = await Promise.all([
         chooserPromise,
-        trigger
-          .click({
-            timeout: FILE_CHOOSER_TIMEOUT_MS,
-            signal: controller.signal,
-          })
+        this.interaction
+          .click(trigger, undefined, Date.now() + FILE_CHOOSER_TIMEOUT_MS)
           .then(() => {
-            if (controller.signal.aborted) return;
+            if (this.interaction.signal.aborted) return;
             // Only time the chooser after the click completes, so a blocked
             // click retains Playwright's actionable diagnostic instead.
             timer = setTimeout(
@@ -470,12 +536,12 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
       ) {
         throw new Error("file_chooser_target_mismatch");
       }
-      await delay(INPUT_SETTLE_MS);
+      await this.interaction.wait(INPUT_SETTLE_MS);
       await chooser.setFiles([...filePaths], {
         timeout: FILE_CHOOSER_TIMEOUT_MS,
       });
     } finally {
-      controller.abort();
+      this.interaction.signal.removeEventListener("abort", onAbort);
       cancelWait(new Error("file_chooser_wait_finished"));
       clearTimeout(timer);
       this.page.off("filechooser", onChooser);
@@ -487,42 +553,47 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     target: ElementReference,
     filePaths: readonly string[],
   ): Promise<void> {
-    assertAbsoluteFilePaths(filePaths);
-    const payload = await Promise.all(
-      filePaths.map(async (filePath) => ({
-        name: basename(filePath),
-        type: mediaType(filePath),
-        base64: (await readFile(filePath)).toString("base64"),
-      })),
-    );
-    const dataTransfer = await this.page.evaluateHandle((files) => {
-      const browser = globalThis as unknown as {
-        atob(value: string): string;
-        DataTransfer: new () => { items: { add(file: unknown): void } };
-        File: new (
-          parts: readonly unknown[],
-          name: string,
-          options: { type: string },
-        ) => unknown;
-      };
-      const transfer = new browser.DataTransfer();
-      for (const file of files) {
-        const bytes = Uint8Array.from(browser.atob(file.base64), (character) =>
-          character.charCodeAt(0),
-        );
-        transfer.items.add(
-          new browser.File([bytes], file.name, { type: file.type }),
-        );
+    await this.interaction.run(async () => {
+      assertAbsoluteFilePaths(filePaths);
+      const payload = await Promise.all(
+        filePaths.map(async (filePath) => ({
+          name: basename(filePath),
+          type: mediaType(filePath),
+          base64: (await readFile(filePath)).toString("base64"),
+        })),
+      );
+      const dataTransfer = await this.page.evaluateHandle((files) => {
+        const browser = globalThis as unknown as {
+          atob(value: string): string;
+          DataTransfer: new () => { items: { add(file: unknown): void } };
+          File: new (
+            parts: readonly unknown[],
+            name: string,
+            options: { type: string },
+          ) => unknown;
+        };
+        const transfer = new browser.DataTransfer();
+        for (const file of files) {
+          const bytes = Uint8Array.from(
+            browser.atob(file.base64),
+            (character) => character.charCodeAt(0),
+          );
+          transfer.items.add(
+            new browser.File([bytes], file.name, { type: file.type }),
+          );
+        }
+        return transfer;
+      }, payload);
+      try {
+        const locator = this.locatorFor(target);
+        this.interaction.check();
+        await locator.dispatchEvent("dragover", { dataTransfer });
+        this.interaction.check();
+        await locator.dispatchEvent("drop", { dataTransfer });
+      } finally {
+        await dataTransfer.dispose();
       }
-      return transfer;
-    }, payload);
-    try {
-      const locator = this.locatorFor(target);
-      await locator.dispatchEvent("dragover", { dataTransfer });
-      await locator.dispatchEvent("drop", { dataTransfer });
-    } finally {
-      await dataTransfer.dispose();
-    }
+    });
   }
 
   async textContent(target: ElementReference): Promise<string | null> {
@@ -537,13 +608,24 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
   }
 
   async captureEvidence(reason: string): Promise<EvidenceReference> {
-    const id = randomUUID();
-    await mkdir(this.evidenceDirectory, { recursive: true });
-    await this.page.screenshot({
-      path: join(this.evidenceDirectory, `${id}.png`),
-      fullPage: true,
+    const screenshot = await this.page.screenshot({ fullPage: true });
+    const metadata = await new DiagnosticAttachmentStore(
+      dirname(this.evidenceDirectory),
+    ).saveScreenshot({
+      traceId: basename(this.evidenceDirectory),
+      png: screenshot,
+      reasonCode: "workflow_failure",
     });
-    return { id, capturedAt: new Date().toISOString(), reason };
+    return {
+      id: metadata.id,
+      capturedAt: metadata.capturedAt,
+      reason,
+      mimeType: metadata.mimeType,
+      byteSize: metadata.byteSize,
+      width: metadata.width,
+      height: metadata.height,
+      relativeRef: metadata.relativeRef,
+    };
   }
 
   private locatorFor(reference: ElementReference): Locator {

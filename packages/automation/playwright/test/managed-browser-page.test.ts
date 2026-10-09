@@ -5,7 +5,9 @@ import { createManagedBrowserPage } from "../src/managed-browser-page.js";
 function fixture() {
   const events = new EventEmitter();
   let closed = false;
+  const context = {};
   const page = Object.assign(events, {
+    context: () => context,
     goto: vi.fn(async (): Promise<void> => undefined),
     url: () => "https://example.test/",
     isClosed: () => closed,
@@ -57,13 +59,14 @@ describe("managed page ownership", () => {
     );
     const page = await f.create();
     const navigate = page.driver.navigate("https://example.test/a");
+    await Promise.resolve();
     const handoff = page.handoff();
     expect(page.owner).toBe("AUTOMATION");
     await expect(
       page.driver.navigate("https://example.test/b"),
     ).rejects.toThrow("控制权");
     finish();
-    await navigate;
+    await expect(navigate).rejects.toThrow("控制权");
     await handoff;
     expect(page.owner).toBe("HUMAN");
     expect(f.page.goto).toHaveBeenCalledOnce();

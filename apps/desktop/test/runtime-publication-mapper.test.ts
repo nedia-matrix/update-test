@@ -25,6 +25,34 @@ const request = {
 };
 
 describe("runtime publication mapping", () => {
+  it("maps Kuaishou image-text requests to the adapter's content form", () => {
+    expect(
+      parseRuntimePublicationRequest({
+        ...request,
+        target: {
+          ...request.target,
+          platform: "kuaishou",
+          contentForm: "image_text",
+        },
+        content: {
+          title: "标题",
+          body: { type: "plain_text", text: "正文" },
+          images: [
+            {
+              url: "https://assets.example.test/image.jpg",
+              name: "image.jpg",
+              type: "image/jpeg",
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      platform: "kuaishou",
+      contentForm: "imageText",
+      assets: [{ role: "image" }],
+    });
+  });
+
   it("rejects submissionMode instead of silently granting or ignoring it", () => {
     expect(() =>
       parseRuntimePublicationRequest({

@@ -261,12 +261,15 @@ const submit = defineWorkflow({
 });
 
 const sessionDetection = defineSessionDetectionPlan({
+  loggedOutUrl: "https://creator.xiaohongshu.com/login",
   probes: [
     {
       identityScheme: "xiaohongshu.red_num",
       source: {
-        kind: "request",
+        kind: "observed-response",
+        method: "GET",
         url: "https://creator.xiaohongshu.com/api/galaxy/creator/home/personal_info",
+        timeoutMs: 10_000,
       },
       fields: {
         externalAccountId: ["data", "red_num"],

@@ -73,6 +73,13 @@ export type AutomationTraceEvent =
   | (WorkflowTraceFields & {
       readonly type: "evidence.captured";
       readonly evidenceId: string;
+      readonly capturedAt: string;
+      readonly reasonCode: "workflow_failure";
+      readonly mimeType?: string;
+      readonly byteSize?: number;
+      readonly relativeRef?: string;
+      readonly width?: number;
+      readonly height?: number;
     })
   | (WorkflowTraceFields & {
       readonly type: "evidence.capture_failed";

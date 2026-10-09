@@ -46,6 +46,42 @@ function snapshot() {
 }
 
 describe("publication aggregate", () => {
+  it("allows explicit removal of cancelled and rejected tasks after execution ends", () => {
+    const base = snapshot();
+    const cancelled = Publication.rehydrate({
+      ...base,
+      publication: transitionPublication(
+        base.publication,
+        "cancelled",
+        "2026-09-10T00:00:01.000Z",
+      ),
+      updatedAt: "2026-09-10T00:00:01.000Z",
+    });
+    expect(cancelled.canBeRemovedFromArchive()).toBe(true);
+    expect(cancelled.canBeRemovedFromArchive(true)).toBe(false);
+
+    const validated = transitionPublication(
+      transitionPublication(
+        createPublication({
+          id: "publication-1",
+          platformId: "platform-1",
+          accountId: "account-1",
+          contentRevisionId: base.contentRevision.id,
+        }),
+        "validated",
+        createdAt,
+      ),
+      "rejected",
+      "2026-09-10T00:00:01.000Z",
+    );
+    const rejected = Publication.rehydrate({
+      ...base,
+      publication: validated,
+      updatedAt: "2026-09-10T00:00:01.000Z",
+    });
+    expect(rejected.canBeRemovedFromArchive()).toBe(true);
+  });
+
   it("owns observation transitions and rejects mismatched identities", () => {
     const aggregate = Publication.rehydrate(snapshot());
 

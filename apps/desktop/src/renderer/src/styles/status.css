@@ -1,0 +1,56 @@
+.global-status {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: var(--sidebar-width);
+  z-index: 50;
+  display: flex;
+  height: var(--status-bar-height);
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 20px;
+}
+.global-status-message {
+  flex: 1;
+  min-width: 0;
+  max-height: 20px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.global-status-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.global-status-actions .icon-button {
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  color: inherit;
+}
+.global-status-message:focus-visible,
+.global-status-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.global-status.status-busy .status-indicator {
+  background: var(--warning);
+}
+.global-status.status-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.global-status.status-error .status-indicator {
+  background: var(--danger);
+}

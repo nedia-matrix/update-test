@@ -86,7 +86,9 @@ const account: PlatformAccountSnapshot = {
 function createRuntimeApplication(
   initialAccounts: PlatformAccountSnapshot[] = [account],
   options?: {
+    deletedRequestId?: string;
     publicationBusy?: boolean;
+    publicationFailure?: { message: string };
     verificationMismatch?: boolean;
     replacementAlias?: {
       candidateAccountId: string;
@@ -202,6 +204,14 @@ function createRuntimeApplication(
       actions.push(`publish:${request.requestId}`);
       if (options?.publicationBusy) {
         return { status: "account_busy" as const };
+      }
+      if (options?.publicationFailure) {
+        return {
+          status: "failed" as const,
+          code: "UNEXPECTED_ERROR",
+          message: options.publicationFailure.message,
+          evidenceId: null,
+        };
       }
       publications.push({
         id: "publication-1",
@@ -390,6 +400,8 @@ function createRuntimeApplication(
       },
       publications: {
         list: legacyApplication.listPublications,
+        wasDeleted: (requestId: string) =>
+          requestId === options?.deletedRequestId,
         publicationUrl: () => {
           throw new Error("not used");
         },
@@ -486,6 +498,36 @@ describe("LocalRuntimeHttpServer", () => {
       status: "running",
       port: restartedPort,
     });
+  });
+
+  it("records failures without logging every successful runtime request", async () => {
+    const runtime = createRuntimeApplication([]);
+    const events: string[] = [];
+    const server = new LocalRuntimeHttpServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+      diagnostics: {
+        start: () => ({
+          traceId: "trace-1",
+          bind: () => undefined,
+          report: ({ event }) => events.push(event),
+          finish: ({ outcome }) => events.push(`finish:${outcome}`),
+        }),
+      },
+    });
+    servers.push(server);
+    const port = await server.start();
+
+    const response = await fetch(`http://127.0.0.1:${port}/v1/runtime`);
+    expect(response.status).toBe(200);
+    await response.arrayBuffer();
+    expect(events).toEqual([]);
+
+    const missing = await fetch(`http://127.0.0.1:${port}/v1/missing`);
+    expect(missing.status).toBe(404);
+    await missing.arrayBuffer();
+    expect(events).toEqual(["runtime.request.completed", "finish:rejected"]);
   });
 
   it("stops without waiting for an active request to finish", async () => {
@@ -1083,6 +1125,52 @@ describe("LocalRuntimeHttpServer", () => {
     });
   });
 
+  it("reports a deleted request and refuses to publish it again", async () => {
+    const runtime = createRuntimeApplication([account], {
+      deletedRequestId: "deleted-request",
+    });
+    const server = new LocalRuntimeHttpServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const status = await fetch(`${baseUrl}/v1/publications/deleted-request`);
+    expect(await status.json()).toEqual({
+      requestId: "deleted-request",
+      state: "deleted",
+    });
+    const replay = await fetch(`${baseUrl}/v1/publications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: "deleted-request",
+        target: {
+          platform: "douyin",
+          contentForm: "video",
+          externalAccountId: "external-1",
+        },
+        content: {
+          title: "测试视频",
+          body: { type: "plain_text", text: "正文" },
+          video: {
+            url: "https://assets.example.test/video.mp4",
+            name: "video.mp4",
+            type: "video/mp4",
+          },
+        },
+        limits: {},
+      }),
+    });
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toMatchObject({
+      code: "PUBLICATION_DELETED",
+    });
+    expect(runtime.actions).not.toContain("publish:deleted-request");
+  });
+
   it("reports an account-level publication conflict without creating history", async () => {
     const runtime = createRuntimeApplication([account], {
       publicationBusy: true,
@@ -1121,6 +1209,48 @@ describe("LocalRuntimeHttpServer", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "ACCOUNT_BUSY" });
+    expect(runtime.publications).toEqual([]);
+  });
+
+  it("reports the preparation failure when no publication was created", async () => {
+    const runtime = createRuntimeApplication([account], {
+      publicationFailure: { message: "Invalid publication metadata" },
+    });
+    const server = new LocalRuntimeHttpServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const response = await fetch(`http://127.0.0.1:${port}/v1/publications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: "request-failed",
+        target: {
+          platform: "douyin",
+          contentForm: "video",
+          externalAccountId: "external-1",
+        },
+        content: {
+          title: "测试视频",
+          body: { type: "plain_text", text: "正文" },
+          video: {
+            url: "https://assets.example.test/video.mp4",
+            name: "video.mp4",
+            type: "video/mp4",
+          },
+        },
+        limits: {},
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      code: "PUBLISH_FAILED",
+      message: "Invalid publication metadata",
+    });
     expect(runtime.publications).toEqual([]);
   });
 

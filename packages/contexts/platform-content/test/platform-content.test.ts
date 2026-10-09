@@ -115,7 +115,7 @@ describe("PlatformContentService", () => {
       secondObservedAt,
     );
     expect(start).toHaveBeenCalledWith({
-      operation: "content_sync",
+      operation: "content.sync",
       accountId: "account-1",
       platformId: "douyin",
       requestId: "run-1",

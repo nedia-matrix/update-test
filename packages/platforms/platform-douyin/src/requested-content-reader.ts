@@ -1,7 +1,9 @@
+import { PlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 import type {
   PlatformContentCapability,
   PlatformContentData,
   PlatformContentReadResult,
+  PlatformJsonResponse,
 } from "@nedia-matrix/platform-sdk";
 
 import { parseDouyinContentPage } from "./data-reader.js";
@@ -57,10 +59,22 @@ export const douyinRequestedContentCapability: PlatformContentCapability = {
       }
       seenCursors.add(cursor);
 
-      const response = await client.requestJson({
-        method: "GET",
-        url: contentPageUrl(cursor),
-      });
+      let response: PlatformJsonResponse;
+      try {
+        response = await client.requestJson({
+          method: "GET",
+          url: contentPageUrl(cursor),
+        });
+      } catch (error) {
+        if (pagesRead === 0 || !(error instanceof PlatformDataOperationError))
+          throw error;
+        return partialResult(
+          items,
+          pagesRead,
+          remoteTotal,
+          `抖音作品第 ${pagesRead + 1} 页同步停止（${error.userMessage}）`,
+        );
+      }
       if (!response.ok || response.body === null) {
         if (pagesRead === 0) {
           throw new Error(`抖音作品列表请求失败（HTTP ${response.status}）`);

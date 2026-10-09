@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 
 import {
   xiaohongshuPlatformModule,
@@ -7,6 +8,70 @@ import {
 } from "../src/index.js";
 
 describe("Xiaohongshu data reader", () => {
+  const client = (scrollForJsonResponse: ReturnType<typeof vi.fn>) => ({
+    navigate: async () => undefined,
+    navigateForJsonResponses: async () => [
+      {
+        status: 200,
+        ok: true,
+        body: {
+          success: true,
+          code: 0,
+          data: {
+            tags: [{ id: "special.note_time_desc", notes_count: 2 }],
+            notes: [{ id: "content-1", type: "video" }],
+          },
+        },
+      },
+    ],
+    requestJson: vi.fn(),
+    waitForJsonResponse: async () => null,
+    scrollToEnd: async () => ({ found: true, moved: false, atEnd: false }),
+    scrollForJsonResponse,
+    dispose: () => undefined,
+  });
+  it.each([
+    { code: "rate_limited", reason: "平台请求受限" },
+    { code: "scroll_failed", reason: "页面滚动失败" },
+  ] as const)(
+    "retains verified pages after $code without retrying or exposing request details",
+    async ({ code, reason }) => {
+      const scroll = vi
+        .fn()
+        .mockRejectedValue(
+          new PlatformDataOperationError(
+            code,
+            "https://creator.example/api?token=secret",
+          ),
+        );
+      await expect(
+        xiaohongshuPlatformModule.content!.read(client(scroll), "account-1"),
+      ).resolves.toMatchObject({
+        complete: false,
+        pagesRead: 1,
+        remoteTotal: 2,
+        items: [{ externalContentId: "content-1" }],
+        diagnostics: [expect.stringContaining(reason)],
+      });
+      expect(scroll).toHaveBeenCalledOnce();
+    },
+  );
+  it("propagates cancellation and response validation failures", async () => {
+    const cancelled = new Error("页面控制权已移交或自动操作已取消");
+    await expect(
+      xiaohongshuPlatformModule.content!.read(
+        client(vi.fn().mockRejectedValue(cancelled)),
+        "account-1",
+      ),
+    ).rejects.toBe(cancelled);
+    const scroll = vi.fn().mockResolvedValue({
+      scroll: { found: true, moved: true, atEnd: false },
+      response: { status: 200, ok: true, body: { success: false, code: 100 } },
+    });
+    await expect(
+      xiaohongshuPlatformModule.content!.read(client(scroll), "account-1"),
+    ).rejects.toThrow("作品列表响应失败");
+  });
   it("maps profile counters", () => {
     expect(
       parseXiaohongshuAccountProfile({
@@ -25,6 +90,54 @@ describe("Xiaohongshu data reader", () => {
       contentCount: 9,
       likeCount: 102,
     });
+  });
+
+  it("reads profile data from the page response without issuing an unsigned API request", async () => {
+    const events: string[] = [];
+    const requestJson = vi
+      .fn()
+      .mockResolvedValue({ status: 403, ok: false, body: null });
+    const waitForJsonResponse = vi.fn(async () => {
+      events.push("wait");
+      return {
+        status: 200,
+        ok: true,
+        body: { data: { fans_count: 8, personal_desc: "简介" } },
+      };
+    });
+    await expect(
+      xiaohongshuPlatformModule.accountProfile!.read(
+        {
+          navigate: async () => {
+            events.push("navigate");
+          },
+          requestJson,
+          waitForJsonResponse,
+          scrollToEnd: async () => ({ found: true, moved: false, atEnd: true }),
+          dispose: () => undefined,
+        },
+        "account-1",
+      ),
+    ).resolves.toEqual({ followerCount: 8, description: "简介" });
+    expect(events).toEqual(["wait", "navigate"]);
+    expect(requestJson).not.toHaveBeenCalled();
+    expect(waitForJsonResponse).toHaveBeenCalledWith({
+      method: "GET",
+      url: "https://creator.xiaohongshu.com/api/galaxy/creator/home/personal_info",
+      timeoutMs: 10_000,
+    });
+  });
+
+  it("reports a missing profile response", async () => {
+    await expect(
+      xiaohongshuPlatformModule.accountProfile!.read(
+        {
+          ...client(vi.fn()),
+          navigateForJsonResponses: async () => [null],
+        },
+        "account-1",
+      ),
+    ).rejects.toThrow("小红书账号资料响应未出现或请求失败");
   });
 
   it("maps note metrics and never carries the request token into storage", () => {

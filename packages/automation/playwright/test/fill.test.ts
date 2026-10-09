@@ -18,6 +18,12 @@ function contentEditablePage(text = "喵～") {
     addRange: vi.fn(),
   };
   const ownerDocument = {
+    defaultView: {
+      getComputedStyle: () => ({
+        borderLeftWidth: "0px",
+        borderTopWidth: "0px",
+      }),
+    },
     activeElement: null as unknown,
     getSelection: () => selection,
     createRange: () => range,
@@ -49,18 +55,30 @@ function contentEditablePage(text = "喵～") {
     isVisible: async () => true,
     isEnabled: async () => true,
     isEditable: async () => true,
-    evaluate: async (callback: (target: typeof element) => unknown) =>
-      callback(element),
+    evaluate: async (
+      callback: (target: typeof element) => unknown,
+      argument?: unknown,
+    ) => (argument ? true : callback(element)),
+    scrollIntoViewIfNeeded: async () => undefined,
+    boundingBox: async () => ({ x: 10, y: 10, width: 200, height: 80 }),
     fill,
     blur,
     focus,
     press,
-    click,
+    click: async (options?: { trial?: boolean }) => {
+      if (!options?.trial) await click();
+    },
     pressSequentially,
     dispatchEvent,
     textContent: async () => "喵～#添加话题 @好友",
   } as unknown as Locator;
+  const context = {};
   const page = {
+    context: () => context,
+    once: vi.fn(),
+    isClosed: () => false,
+    mouse: { move: vi.fn(async () => undefined) },
+    evaluate: vi.fn(async () => ({ width: 1366, height: 768 })),
     keyboard: { insertText },
     getByTestId: () => locator,
     evaluateHandle: vi.fn(async () => ({
@@ -98,20 +116,21 @@ describe("Playwright form filling", () => {
         await driver.query({ kind: "test-id", value: "body" })
       )[0]!;
       const filling = driver.fill(target, value);
-      await vi.advanceTimersByTimeAsync(710);
+      await vi.runAllTimersAsync();
       await filling;
       expect(press.mock.calls).toEqual([["ControlOrMeta+A"], ["Backspace"]]);
-      expect(pressSequentially.mock.calls.map(([text]) => text)).toEqual([
-        "正文",
-        "#开学第一课",
-        "#早八人",
-      ]);
+      expect(
+        pressSequentially.mock.calls
+          .map(([text]) => text)
+          .join(" ")
+          .replaceAll(" ", ""),
+      ).toBe(value.replaceAll(" ", ""));
       expect(insertText.mock.calls).toEqual([[" "], [" "], [" "]]);
       expect(pressSequentially.mock.invocationCallOrder[0]).toBeLessThan(
         insertText.mock.invocationCallOrder[0]!,
       );
       expect(insertText.mock.invocationCallOrder[2]).toBeLessThan(
-        pressSequentially.mock.invocationCallOrder[2]!,
+        pressSequentially.mock.invocationCallOrder.at(-1)!,
       );
     } finally {
       vi.useRealTimers();
@@ -133,7 +152,7 @@ describe("Playwright form filling", () => {
       const filling = expect(
         driver.fill(target, "#开学第一课 #早八人"),
       ).rejects.toThrow("filled_value_mismatch");
-      await vi.advanceTimersByTimeAsync(670);
+      await vi.runAllTimersAsync();
       await filling;
     } finally {
       vi.useRealTimers();
@@ -161,10 +180,11 @@ describe("Playwright form filling", () => {
         expect(press).not.toHaveBeenCalled();
         expect(pressSequentially).not.toHaveBeenCalled();
         await vi.advanceTimersByTimeAsync(1);
+        await vi.runAllTimersAsync();
         await writing;
         expect(
           action === "typeText" ? pressSequentially : press,
-        ).toHaveBeenCalledOnce();
+        ).toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
       }
@@ -187,15 +207,18 @@ describe("Playwright form filling", () => {
       await vi.advanceTimersByTimeAsync(99);
       expect(press).not.toHaveBeenCalled();
       expect(pressSequentially).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(551);
+      await vi.runAllTimersAsync();
       await filling;
       expect(fill).not.toHaveBeenCalled();
       expect(click).toHaveBeenCalledOnce();
       expect(press.mock.calls).toEqual([["ControlOrMeta+A"], ["Backspace"]]);
-      expect(pressSequentially).toHaveBeenCalledWith("喵～", {
-        delay: 20,
-        timeout: 30_080,
-      });
+      expect(pressSequentially.mock.calls.map(([text]) => text)).toEqual([
+        "喵",
+        "～",
+      ]);
+      expect(pressSequentially.mock.calls[0]![1]!.timeout).toBeGreaterThan(
+        30_000,
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -215,7 +238,7 @@ describe("Playwright form filling", () => {
       expect(target).toBeDefined();
 
       const filling = driver.fill(target!, "喵～");
-      await vi.advanceTimersByTimeAsync(650);
+      await vi.runAllTimersAsync();
       await filling;
 
       expect(fill).not.toHaveBeenCalled();
@@ -275,10 +298,12 @@ describe("Playwright form filling", () => {
     expect(focus).toHaveBeenCalledOnce();
     expect(range.collapse).toHaveBeenCalledWith(false);
     expect(selection.addRange).toHaveBeenCalledWith(range);
-    expect(pressSequentially).toHaveBeenCalledWith("#旅行", {
-      delay: 80,
-      timeout: 30_480,
-    });
+    expect(pressSequentially.mock.calls.map(([text]) => text)).toEqual([
+      "#",
+      "旅",
+      "行",
+    ]);
+    expect(pressSequentially.mock.calls[0]![1]!.delay).toBe(0);
     expect(press).toHaveBeenCalledWith("Enter");
   });
 });

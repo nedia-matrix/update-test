@@ -6,6 +6,7 @@ export type IconName =
   | "arrow-up-right"
   | "check"
   | "chevron-down"
+  | "close"
   | "content"
   | "copy"
   | "dark"
@@ -35,6 +36,7 @@ const paths: Record<IconName, JSX.Element> = {
   ),
   check: <path d="m5 12 4 4L19 6" />,
   "chevron-down": <path d="m6 9 6 6 6-6" />,
+  close: <path d="m6 6 12 12M6 18 18 6" />,
   content: (
     <>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

@@ -1,4 +1,9 @@
 import type {
+  DesktopPreferences,
+  GetPreferencesRequest,
+  UpdatePreferencesRequest,
+} from "./preferences.js";
+import type {
   CreatePlatformAccountRequest,
   DetectPlatformSessionResult,
   OpenPlatformAccountResult,
@@ -15,7 +20,12 @@ import type {
   OpenPublicationRequest,
   PreparePublishDraftRequest,
   PreparePublishDraftResult,
-  PublicationSummary,
+  PublicationTaskSummary,
+  PublicationAttentionResolution,
+  PublicationArchiveCleanupResult,
+  PublicationQuery,
+  PublicationQueryResult,
+  RecreatedPublicationDraft,
   PublishResultUpdate,
   SelectPublishMediaRequest,
   SelectPublishMediaResult,
@@ -23,16 +33,32 @@ import type {
 
 import type {
   ApplicationUpdateCheckResult,
-  AutomationTraceReference,
-  FindAutomationTraceRequest,
+  ApplicationUpdateState,
+  DiagnosticTraceRecord,
+  DiagnosticAttachment,
+  ExportDiagnosticTraceRequest,
+  ExportDiagnosticTraceResult,
+  DiagnosticTraceReference,
+  FindDiagnosticTraceRequest,
   LocalRuntimeStatus,
   OpenApplicationUpdateDownloadRequest,
   PlatformSummary,
   SetLocalRuntimeRunningRequest,
+  ReadDiagnosticTraceRequest,
+  ReadDiagnosticAttachmentRequest,
 } from "./contracts.js";
 
 export interface MatrixDesktopApi {
+  getPreferences(request?: GetPreferencesRequest): Promise<DesktopPreferences>;
+  updatePreferences(
+    request: UpdatePreferencesRequest,
+  ): Promise<DesktopPreferences>;
   checkForApplicationUpdate(): Promise<ApplicationUpdateCheckResult>;
+  getApplicationUpdateState(): Promise<ApplicationUpdateState>;
+  onApplicationUpdateChanged(listener: (state: ApplicationUpdateState) => void): () => void;
+  downloadApplicationUpdate(): Promise<void>;
+  cancelApplicationUpdateDownload(): Promise<void>;
+  showApplicationUpdateFile(): Promise<void>;
   openApplicationUpdateDownload(
     request: OpenApplicationUpdateDownloadRequest,
   ): Promise<void>;
@@ -72,7 +98,33 @@ export interface MatrixDesktopApi {
   preparePublishDraft(
     request: PreparePublishDraftRequest,
   ): Promise<PreparePublishDraftResult>;
-  listPublications(): Promise<PublicationSummary[]>;
+  queryPublications(request: PublicationQuery): Promise<PublicationQueryResult>;
+  getPublicationTask(
+    request: OpenPublicationRequest,
+  ): Promise<PublicationTaskSummary | null>;
+  getPublicationPlatformContent(request: OpenPublicationRequest): Promise<{
+    content: PlatformContentSnapshot | null;
+    latestRun: PlatformContentSyncRun | null;
+    accountMissing: boolean;
+  }>;
+  recreatePublicationDraft(
+    request: OpenPublicationRequest,
+  ): Promise<RecreatedPublicationDraft>;
+  resolvePublicationAttention(request: {
+    publicationId: string;
+    resolution: PublicationAttentionResolution;
+    manualPlatformContentId?: string;
+  }): Promise<PublicationTaskSummary>;
+  selectPublicationContent(request: {
+    publicationId: string;
+    externalContentId: string;
+  }): Promise<PublicationTaskSummary>;
+  reopenPublicationAttention(request: {
+    publicationId: string;
+  }): Promise<PublicationTaskSummary>;
+  removePublicationArchiveRecord(request: {
+    publicationId: string;
+  }): Promise<PublicationArchiveCleanupResult>;
   openPublicationReview(request: OpenPublicationRequest): Promise<void>;
   openPublication(request: OpenPublicationRequest): Promise<void>;
   onPublishResultUpdate(listener: (update: PublishResultUpdate) => void): void;
@@ -80,8 +132,17 @@ export interface MatrixDesktopApi {
   setLocalRuntimeRunning(
     request: SetLocalRuntimeRunningRequest,
   ): Promise<LocalRuntimeStatus>;
-  openAutomationLogDirectory(): Promise<void>;
-  findAutomationTrace(
-    request: FindAutomationTraceRequest,
-  ): Promise<AutomationTraceReference | null>;
+  openDiagnosticDirectory(): Promise<void>;
+  findDiagnosticTrace(
+    request: FindDiagnosticTraceRequest,
+  ): Promise<DiagnosticTraceReference | null>;
+  readDiagnosticTrace(
+    request: ReadDiagnosticTraceRequest,
+  ): Promise<DiagnosticTraceRecord[]>;
+  readDiagnosticAttachment(
+    request: ReadDiagnosticAttachmentRequest,
+  ): Promise<DiagnosticAttachment | null>;
+  exportDiagnosticTrace(
+    request: ExportDiagnosticTraceRequest,
+  ): Promise<ExportDiagnosticTraceResult>;
 }

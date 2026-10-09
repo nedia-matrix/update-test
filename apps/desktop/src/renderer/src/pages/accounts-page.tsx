@@ -114,9 +114,9 @@ export function AccountsPage({
 
   return (
     <div class="account-workspace">
-      <header class="account-profile-header">
+      <header class="workspace-header account-profile-header">
         <AccountAvatar account={account} accountName={accountName} large />
-        <div class="account-profile-copy">
+        <div class="workspace-header-copy account-profile-copy">
           <div class="account-profile-name">
             <h1>{accountName}</h1>
             <span class={`status-badge account-${account.status}`}>
@@ -133,7 +133,7 @@ export function AccountsPage({
             <p class="account-profile-description">{accountDescription}</p>
           )}
         </div>
-        <div class="account-profile-actions">
+        <div class="workspace-header-actions account-profile-actions">
           <button
             class="secondary-button compact-button"
             type="button"
@@ -171,7 +171,7 @@ export function AccountsPage({
         </div>
       </header>
 
-      <nav class="account-tabs" aria-label="账号内容">
+      <nav class="workspace-tabs account-tabs" aria-label="账号内容">
         <button
           class={activeTab === "overview" ? "active" : undefined}
           type="button"

@@ -64,6 +64,21 @@ export class ContentAddressedPublicationAssetStore {
     }
   }
 
+  async resolvePath(relativePath: string): Promise<string | undefined> {
+    if (!/^sha256\/[a-f0-9]{2}\/[a-f0-9]{64}\.[a-z0-9]+$/.test(relativePath))
+      return undefined;
+    const absolutePath = join(this.root, relativePath);
+    try {
+      const metadata = await lstat(absolutePath);
+      return metadata.isFile() && !metadata.isSymbolicLink()
+        ? absolutePath
+        : undefined;
+    } catch (error) {
+      if (isFileMissingError(error)) return undefined;
+      throw error;
+    }
+  }
+
   async list(): Promise<StoredPublicationAsset[]> {
     const shaRoot = join(this.root, "sha256");
     let prefixes;

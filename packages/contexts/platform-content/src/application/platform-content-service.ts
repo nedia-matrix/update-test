@@ -101,7 +101,7 @@ export interface PlatformContentAutomationDiagnosticTrace {
 
 export interface PlatformContentAutomationDiagnosticPort {
   start(input: {
-    operation: "content_sync";
+    operation: "content.sync";
     accountId: string;
     platformId: string;
     requestId: string;
@@ -183,7 +183,7 @@ export class PlatformContentService {
     try {
       const account = this.dependencies.accounts.require(accountId);
       trace = startDiagnosticTrace(this.dependencies, {
-        operation: "content_sync",
+        operation: "content.sync",
         accountId,
         platformId: account.platformId,
         requestId: runId,
@@ -331,7 +331,28 @@ export class PlatformContentService {
         remoteTotal: null,
         diagnostics: [error instanceof Error ? error.message : "作品同步失败"],
       };
-      this.dependencies.repository.saveRun(run);
+      try {
+        this.dependencies.repository.saveRun(run);
+      } catch (persistenceError) {
+        report(trace, {
+          component: "content",
+          event: "content.sync.failure_record_persist_failed",
+          level: "error",
+          details: {
+            code: "SYNC_FAILURE_RECORD_PERSIST_FAILED",
+            errorName:
+              persistenceError instanceof Error
+                ? persistenceError.name
+                : "UnknownError",
+            message:
+              persistenceError instanceof Error
+                ? persistenceError.message
+                : "Unable to save failed sync run",
+          },
+        });
+        finish(trace, { outcome: "failed" });
+        throw persistenceError;
+      }
       report(trace, {
         component: "content",
         event: "content.sync.failed",
@@ -344,7 +365,6 @@ export class PlatformContentService {
       });
       finish(trace, {
         outcome: "failed",
-        message: error instanceof Error ? error.message : "作品同步失败",
       });
       return run;
     }

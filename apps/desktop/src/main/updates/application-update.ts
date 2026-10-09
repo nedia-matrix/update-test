@@ -1,55 +1,35 @@
 import type { ApplicationUpdateCheckResult } from "../../bridge/contracts.js";
+import { publicUpdateFetch } from "./public-update-fetch.js";
+import { fetchUpdateAsset, readBoundedResponse } from "./update-network.js";
+import type { UpdateManifest } from "./update-manifest.js";
+const updateRepository = "nedia-matrix/desktop";
 
-declare const __NEDIA_UPDATE_SOURCE__: string;
-
-export type ApplicationUpdateSource = "github" | "gitee";
+export type ApplicationUpdateSource = "github" | "manifest";
 
 const UPDATE_SOURCES = {
   github: {
-    latestReleaseApiUrl:
-      "https://api.github.com/repos/nedia-matrix/desktop/releases/latest",
+    latestReleaseApiUrl: `https://api.github.com/repos/${updateRepository}/releases/latest`,
     releasePageUrl: (tag: string) =>
-      `https://github.com/nedia-matrix/desktop/releases/tag/${tag}`,
+      `https://github.com/${updateRepository}/releases/tag/${tag}`,
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "NediaMatrix-update-check",
     },
   },
-  gitee: {
-    latestReleaseApiUrl:
-      "https://gitee.com/api/v5/repos/nedia-matrix/desktop/releases/latest",
-    releasePageUrl: (tag: string) =>
-      `https://gitee.com/nedia-matrix/desktop/releases#release-${tag}`,
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "NediaMatrix-update-check",
-    },
-  },
-} as const satisfies Record<
-  ApplicationUpdateSource,
-  {
-    latestReleaseApiUrl: string;
-    releasePageUrl(tag: string): string;
-    headers: Readonly<Record<string, string>>;
-  }
->;
+} as const;
 
-const VERSION_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)$/;
+const VERSION_PATTERN = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const UPDATE_CHECK_TIMEOUT_MS = 8_000;
 
-function configuredUpdateSource(): ApplicationUpdateSource {
-  if (
-    typeof __NEDIA_UPDATE_SOURCE__ !== "undefined" &&
-    __NEDIA_UPDATE_SOURCE__ === "gitee"
-  ) {
-    return "gitee";
-  }
+export function configuredUpdateSource(): ApplicationUpdateSource {
   return "github";
 }
 
 export interface ApplicationRelease {
   version: string;
+  assets?: Array<{ name: string; url: string }>;
+  manifest?: UpdateManifest;
 }
 
 export interface ApplicationUpdateDependencies {
@@ -63,7 +43,12 @@ function parseVersion(version: string): NumericVersion | null {
   const match = VERSION_PATTERN.exec(version);
   if (!match) return null;
 
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+  const parts: NumericVersion = [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  ];
+  return parts.every(Number.isSafeInteger) ? parts : null;
 }
 
 export function isNewerVersion(
@@ -82,7 +67,7 @@ export function isNewerVersion(
 }
 
 function releaseFromTag(tag: unknown): ApplicationRelease | null {
-  if (typeof tag !== "string" || !VERSION_PATTERN.test(tag)) return null;
+  if (typeof tag !== "string" || !parseVersion(tag)) return null;
   return {
     version: tag.replace(/^v/, ""),
   };
@@ -91,27 +76,46 @@ function releaseFromTag(tag: unknown): ApplicationRelease | null {
 export function releasePageUrl(
   version: string,
   source: ApplicationUpdateSource = configuredUpdateSource(),
+  repository: string = updateRepository,
 ): string | null {
   const parsedVersion = parseVersion(version);
   if (!parsedVersion) return null;
 
-  return UPDATE_SOURCES[source].releasePageUrl(`v${parsedVersion.join(".")}`);
+  if (source !== "github") return null;
+  return `https://github.com/${repository}/releases/tag/v${parsedVersion.join(".")}`;
 }
 
 export async function findLatestRelease(
-  fetcher: typeof globalThis.fetch = globalThis.fetch,
+  fetcher: typeof globalThis.fetch = publicUpdateFetch,
   source: ApplicationUpdateSource = configuredUpdateSource(),
+  repository: string = updateRepository,
 ): Promise<ApplicationRelease> {
-  const configuration = UPDATE_SOURCES[source];
-  const response = await fetcher(configuration.latestReleaseApiUrl, {
-    headers: configuration.headers,
-    signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
-  });
+  if (source !== "github") throw new Error("协议更新源需读取受信清单");
+  const configuration = UPDATE_SOURCES.github;
+  const response = await fetchUpdateAsset(
+    `https://api.github.com/repos/${repository}/releases/latest`,
+    "github",
+    AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+    fetcher,
+    { ...configuration.headers },
+  );
   if (!response.ok) {
     throw new Error(`Latest release request returned HTTP ${response.status}`);
   }
 
-  const payload: unknown = await response.json();
+  const payload: unknown = JSON.parse(
+    Buffer.from(await readBoundedResponse(response, 512 * 1024)).toString(
+      "utf8",
+    ),
+  );
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    (("prerelease" in payload && payload.prerelease === true) ||
+      ("draft" in payload && payload.draft === true))
+  ) {
+    throw new Error("Latest release is not a published stable release");
+  }
   const tag =
     typeof payload === "object" && payload !== null && "tag_name" in payload
       ? payload.tag_name
@@ -121,6 +125,26 @@ export async function findLatestRelease(
     throw new Error(
       "Latest release response does not contain a stable version tag",
     );
+  }
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "assets" in payload &&
+    Array.isArray(payload.assets)
+  ) {
+    release.assets = payload.assets.flatMap((asset: unknown) => {
+      if (
+        typeof asset !== "object" ||
+        asset === null ||
+        !("name" in asset) ||
+        !("browser_download_url" in asset)
+      )
+        return [];
+      return typeof asset.name === "string" &&
+        typeof asset.browser_download_url === "string"
+        ? [{ name: asset.name, url: asset.browser_download_url }]
+        : [];
+    });
   }
   return release;
 }

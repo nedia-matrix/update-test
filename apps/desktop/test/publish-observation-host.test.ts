@@ -137,7 +137,10 @@ describe("PublishObservationManager", () => {
     fake.emit({ kind: "failed", message: "rejected" });
     await vi.waitFor(() => expect(onFinished).toHaveBeenCalledOnce());
 
-    expect(onFinished).toHaveBeenCalledOnce();
+    expect(onFinished).toHaveBeenCalledWith({
+      kind: "failed",
+      message: "rejected",
+    });
   });
 
   it("keeps the publication lease while terminal persistence is pending", async () => {

@@ -1,76 +1,100 @@
-import type {
-  AutomationLogRecord,
-  PendingAutomationLogRecord,
-} from "./automation-log-record.js";
+import type { DiagnosticRecord, PendingDiagnosticRecord } from "./record.js";
 
 const MAX_MESSAGE_LENGTH = 2_048;
 const MAX_ID_LENGTH = 256;
-export const MAX_AUTOMATION_LOG_RECORD_BYTES = 16 * 1_024;
+export const MAX_DIAGNOSTIC_RECORD_BYTES = 16 * 1_024;
 
 const allowedDetailKeys = new Set([
+  "appVersion",
+  "architecture",
+  "attempt",
+  "assetCount",
+  "assetIndex",
   "attemptedCandidates",
   "boundary",
   "browserChannel",
+  "browserVersion",
+  "byteSize",
+  "capturedAt",
   "code",
   "complete",
   "count",
+  "currentVersion",
   "debug",
+  "decision",
+  "diagnosticCount",
   "durationMs",
   "elementState",
+  "error",
   "errorName",
   "evidenceId",
+  "failedStage",
   "headless",
-  "info",
+  "height",
   "implementationStatus",
-  "itemsRead",
+  "info",
   "inputs",
+  "itemsRead",
   "kind",
   "late",
+  "latestVersion",
   "matchCount",
+  "method",
   "message",
+  "mimeType",
+  "operatingSystem",
+  "operatingSystemVersion",
   "outcome",
   "owner",
   "pageDefinitionId",
-  "phase",
   "pagesRead",
+  "phase",
   "purpose",
   "reason",
+  "reasonCode",
+  "relativeRef",
+  "receivedBytes",
+  "route",
   "remoteTotal",
+  "retryable",
+  "rulesVersion",
   "selectedCandidateIndex",
   "selectedCandidateKind",
   "source",
-  "stateId",
   "stage",
+  "stateId",
   "status",
+  "statusCode",
   "stepCount",
   "stepIndex",
   "stepKind",
+  "summary",
+  "taskId",
   "truncated",
   "url",
+  "version",
   "warn",
-  "error",
-  "diagnosticCount",
-  "summary",
+  "width",
 ]);
 
 const allowedNestedKeys = new Set([
   "attached",
+  "attemptedCandidates",
   "count",
+  "durationMs",
   "editable",
+  "elementState",
   "enabled",
   "kind",
   "length",
   "matchCount",
-  "attemptedCandidates",
+  "outcome",
   "selectedCandidateIndex",
   "selectedCandidateKind",
-  "outcome",
-  "durationMs",
-  "elementState",
   "visible",
 ]);
 
-export function sanitizeUrl(value: string): string {
+export function sanitizeDiagnosticUrl(value: string): string {
   try {
     const url = new URL(value);
     url.username = "";
@@ -83,7 +107,7 @@ export function sanitizeUrl(value: string): string {
   }
 }
 
-export function sanitizeMessage(
+export function sanitizeDiagnosticMessage(
   value: string,
   maxLength = MAX_MESSAGE_LENGTH,
 ): string {
@@ -103,65 +127,65 @@ export function sanitizeMessage(
 }
 
 function sanitizeId(value: string): string {
-  return sanitizeMessage(value, MAX_ID_LENGTH);
+  return sanitizeDiagnosticMessage(value, MAX_ID_LENGTH);
 }
 
-function sanitizeDetails(
-  details: Readonly<Record<string, unknown>> | undefined,
-): Readonly<Record<string, unknown>> | undefined {
-  if (!details) return undefined;
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(details)) {
-    if (!allowedDetailKeys.has(key)) continue;
-    const cleaned = sanitizeDetailValue(key, value, 0);
-    if (cleaned !== undefined) sanitized[key] = cleaned;
-  }
-  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
-}
-
-function sanitizeDetailValue(
-  key: string,
-  value: unknown,
-  depth: number,
-): unknown {
+function sanitizeValue(key: string, value: unknown, depth: number): unknown {
   if (typeof value === "boolean" || typeof value === "number") return value;
   if (typeof value === "string") {
-    if (key === "url") return sanitizeUrl(value);
-    if (key === "message" || key === "reason") return sanitizeMessage(value);
+    if (key === "url") return sanitizeDiagnosticUrl(value);
+    if (key === "message" || key === "reason")
+      return sanitizeDiagnosticMessage(value);
     return sanitizeId(value);
   }
-  if (
-    depth >= 3 ||
-    !value ||
-    typeof value !== "object" ||
-    Array.isArray(value)
-  ) {
+  if (depth >= 3 || !value || typeof value !== "object" || Array.isArray(value))
     return undefined;
-  }
   const output: Record<string, unknown> = {};
   for (const [nestedKey, nestedValue] of Object.entries(value)) {
     if (!allowedNestedKeys.has(nestedKey) && key !== "inputs") continue;
-    if (key === "inputs" && !/^[A-Za-z0-9._~-]{1,128}$/.test(nestedKey)) {
+    if (key === "inputs" && !/^[A-Za-z0-9._~-]{1,128}$/.test(nestedKey))
       continue;
-    }
-    const cleaned = sanitizeDetailValue(nestedKey, nestedValue, depth + 1);
+    const cleaned = sanitizeValue(nestedKey, nestedValue, depth + 1);
     if (cleaned !== undefined) output[nestedKey] = cleaned;
   }
   return output;
 }
 
-export function redactAutomationLogRecord(
-  pending: PendingAutomationLogRecord,
-): AutomationLogRecord {
-  const details = sanitizeDetails(pending.details);
-  const record: AutomationLogRecord = {
-    schemaVersion: 1,
+function sanitizeDetails(
+  details: Readonly<Record<string, unknown>> | undefined,
+  onUnknownKeys?: (keys: readonly string[]) => void,
+) {
+  if (!details) return undefined;
+  const output: Record<string, unknown> = {};
+  const unknownKeys: string[] = [];
+  for (const [key, value] of Object.entries(details)) {
+    if (!allowedDetailKeys.has(key)) {
+      unknownKeys.push(key);
+      continue;
+    }
+    const cleaned = sanitizeValue(key, value, 0);
+    if (cleaned !== undefined) output[key] = cleaned;
+  }
+  if (unknownKeys.length) onUnknownKeys?.(unknownKeys.sort());
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+export function redactDiagnosticRecord(
+  pending: PendingDiagnosticRecord,
+  onUnknownDetailKeys?: (keys: readonly string[]) => void,
+): DiagnosticRecord {
+  const details = sanitizeDetails(pending.details, onUnknownDetailKeys);
+  const record: DiagnosticRecord = {
+    schemaVersion: 2,
     timestamp: new Date(pending.timestamp).toISOString(),
     level: pending.level,
     sequence: pending.sequence,
     traceId: sanitizeId(pending.traceId),
-    operation: pending.operation,
-    component: pending.component,
+    eventId: sanitizeId(
+      pending.eventId ?? `${pending.traceId}:${pending.sequence}`,
+    ),
+    operation: sanitizeId(pending.operation),
+    component: sanitizeId(pending.component),
     event: sanitizeId(pending.event),
     ...(pending.executionId
       ? { executionId: sanitizeId(pending.executionId) }
@@ -178,35 +202,35 @@ export function redactAutomationLogRecord(
     ...(pending.workflowId
       ? { workflowId: sanitizeId(pending.workflowId) }
       : {}),
+    ...(pending.attachmentIds?.length
+      ? { attachmentIds: pending.attachmentIds.map(sanitizeId) }
+      : {}),
     ...(details ? { details } : {}),
   };
   return fitRecord(record);
 }
 
-function fitRecord(record: AutomationLogRecord): AutomationLogRecord {
+function fitRecord(record: DiagnosticRecord): DiagnosticRecord {
   if (
     Buffer.byteLength(JSON.stringify(record), "utf8") <=
-    MAX_AUTOMATION_LOG_RECORD_BYTES
-  ) {
+    MAX_DIAGNOSTIC_RECORD_BYTES
+  )
     return record;
-  }
   const message = record.details?.message;
-  const details = {
-    ...(record.details ?? {}),
-    ...(typeof message === "string"
-      ? { message: sanitizeMessage(message, 512) }
-      : {}),
-    truncated: true,
+  const shortened = {
+    ...record,
+    details: {
+      ...(record.details ?? {}),
+      ...(typeof message === "string"
+        ? { message: sanitizeDiagnosticMessage(message, 512) }
+        : {}),
+      truncated: true,
+    },
   };
-  const shortened = { ...record, details };
   if (
     Buffer.byteLength(JSON.stringify(shortened), "utf8") <=
-    MAX_AUTOMATION_LOG_RECORD_BYTES
-  ) {
+    MAX_DIAGNOSTIC_RECORD_BYTES
+  )
     return shortened;
-  }
-  return {
-    ...record,
-    details: { truncated: true },
-  };
+  return { ...record, details: { truncated: true }, attachmentIds: undefined };
 }

@@ -51,6 +51,7 @@ const accountsManifestSchema = z
     detection: z
       .object({
         probes: z.array(sessionProbeSchema).max(16).default([]),
+        loggedOutUrl: z.string().url().optional(),
         domFallback: z
           .object({
             identityScheme: z.string().min(1),

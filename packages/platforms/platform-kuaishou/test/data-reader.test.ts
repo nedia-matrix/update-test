@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 
 import {
   kuaishouPlatformModule,
@@ -8,6 +9,77 @@ import {
 } from "../src/index.js";
 
 describe("Kuaishou data reader", () => {
+  const client = (scrollForJsonResponse: ReturnType<typeof vi.fn>) => ({
+    navigate: async () => undefined,
+    navigateForJsonResponses: async () => [
+      {
+        status: 200,
+        ok: true,
+        body: {
+          result: 1,
+          data: {
+            total: 2,
+            nextCursor: "cursor-2",
+            list: [{ workId: "content-1", userId: 42 }],
+          },
+        },
+      },
+    ],
+    requestJson: vi.fn(),
+    waitForJsonResponse: async () => null,
+    scrollToEnd: async () => ({ found: true, moved: false, atEnd: false }),
+    scrollForJsonResponse,
+    dispose: () => undefined,
+  });
+  it.each([
+    { code: "rate_limited", reason: "平台请求受限" },
+    { code: "scroll_failed", reason: "页面滚动失败" },
+  ] as const)(
+    "retains verified pages after $code without retrying or exposing request details",
+    async ({ code, reason }) => {
+      const scroll = vi
+        .fn()
+        .mockRejectedValue(
+          new PlatformDataOperationError(
+            code,
+            "https://creator.example/api?token=secret",
+          ),
+        );
+      await expect(
+        kuaishouPlatformModule.content!.read(client(scroll), "42"),
+      ).resolves.toMatchObject({
+        complete: false,
+        pagesRead: 1,
+        remoteTotal: 2,
+        items: [{ externalContentId: "content-1" }],
+        diagnostics: [expect.stringContaining(reason)],
+      });
+      expect(scroll).toHaveBeenCalledOnce();
+    },
+  );
+  it("propagates cancellation and later account mismatches", async () => {
+    const cancelled = new Error("页面控制权已移交或自动操作已取消");
+    await expect(
+      kuaishouPlatformModule.content!.read(
+        client(vi.fn().mockRejectedValue(cancelled)),
+        "42",
+      ),
+    ).rejects.toBe(cancelled);
+    const scroll = vi.fn().mockResolvedValue({
+      scroll: { found: true, moved: true, atEnd: false },
+      response: {
+        status: 200,
+        ok: true,
+        body: {
+          result: 1,
+          data: { list: [{ workId: "content-2", userId: 99 }] },
+        },
+      },
+    });
+    await expect(
+      kuaishouPlatformModule.content!.read(client(scroll), "42"),
+    ).rejects.toThrow("账号与当前登录账号不一致");
+  });
   it("maps available profile counters and leaves absent values unknown", () => {
     expect(
       parseKuaishouAccountProfile({

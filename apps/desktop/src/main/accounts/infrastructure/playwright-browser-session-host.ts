@@ -51,7 +51,7 @@ const defaults: Dependencies = {
   detectSession: detectPlatformSession,
   removeProfileDirectory: rm,
   profilesRoot: () => join(app.getPath("userData"), "browser-profiles"),
-  evidenceRoot: () => join(app.getPath("userData"), "automation-evidence"),
+  evidenceRoot: () => join(app.getPath("userData"), "diagnostics", "evidence"),
 };
 
 export class PlaywrightBrowserSessionHost {
@@ -159,12 +159,34 @@ export class PlaywrightBrowserSessionHost {
     publicationId?: string,
     diagnostics?: BrowserAutomationDiagnosticTrace,
   ) {
-    const page = await this.dependencies.createPage(
-      entry.browser,
-      this.options(account, platform, diagnostics),
-      purpose,
-      publicationId,
-    );
+    diagnostics?.report({
+      component: "browser",
+      event: "browser.page.opening",
+      details: { purpose },
+    });
+    let page: ManagedBrowserPage;
+    try {
+      page = await this.dependencies.createPage(
+        entry.browser,
+        this.options(account, platform, diagnostics),
+        purpose,
+        publicationId,
+      );
+    } catch (error) {
+      diagnostics?.report({
+        component: "browser",
+        event: "browser.page.open_failed",
+        level: "error",
+        details: {
+          purpose,
+          code: "BROWSER_PAGE_OPEN_FAILED",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          message:
+            error instanceof Error ? error.message : "Unable to open page",
+        },
+      });
+      throw error;
+    }
     entry.pages.set(page.id, page);
     diagnostics?.bind({ pageId: page.id });
     diagnostics?.report({
@@ -220,6 +242,18 @@ export class PlaywrightBrowserSessionHost {
         void page.dispose();
       }
     });
+    page.page.once("crash", () => {
+      diagnostics?.report({
+        component: "browser",
+        event: "browser.page.crashed",
+        level: "error",
+        details: {
+          purpose,
+          code: "BROWSER_PAGE_CRASHED",
+          retryable: true,
+        },
+      });
+    });
     return page;
   }
 
@@ -227,13 +261,27 @@ export class PlaywrightBrowserSessionHost {
     account: PlatformAccountSnapshot,
     platform: PlatformModule,
     loginEntry: PlatformLoginEntry,
+    diagnostics?: BrowserAutomationDiagnosticTrace,
   ) {
+    diagnostics = isolateBrowserDiagnostics(diagnostics);
     return this.withProfileTransition(account.profileId, async () => {
-      const entry = await this.ensureContext(account, platform, false);
+      const entry = await this.openUserContext(
+        account,
+        platform,
+        "login",
+        diagnostics,
+      );
       if (entry.syncing || this.hasPublication(entry))
         throw new Error("账号正在执行任务，请结束后再登录或切换账号");
       // Never navigate an existing human-owned page to perform login.
-      const page = await this.newPage(entry, account, platform, "user");
+      const page = await this.newPage(
+        entry,
+        account,
+        platform,
+        "user",
+        undefined,
+        diagnostics,
+      );
       try {
         await page.driver.navigate(loginEntry.url);
         await page.handoff();
@@ -253,17 +301,32 @@ export class PlaywrightBrowserSessionHost {
   async openUserPage(
     account: PlatformAccountSnapshot,
     platform: PlatformModule,
+    diagnostics?: BrowserAutomationDiagnosticTrace,
   ) {
+    diagnostics = isolateBrowserDiagnostics(diagnostics);
     return this.withProfileTransition(account.profileId, async () => {
-      const entry = await this.ensureContext(account, platform, false);
+      const entry = await this.openUserContext(
+        account,
+        platform,
+        "user",
+        diagnostics,
+      );
       const existing = [...entry.pages.values()].find(
         (page) => page.purpose === "user" && !page.page.isClosed(),
       );
       if (existing) {
+        diagnostics?.bind({ pageId: existing.id });
         await existing.focus();
         return existing;
       }
-      const page = await this.newPage(entry, account, platform, "user");
+      const page = await this.newPage(
+        entry,
+        account,
+        platform,
+        "user",
+        undefined,
+        diagnostics,
+      );
       try {
         await page.driver.navigate(platform.browser.startUrl);
         await page.handoff();
@@ -280,6 +343,76 @@ export class PlaywrightBrowserSessionHost {
     });
   }
 
+  private async openUserContext(
+    account: PlatformAccountSnapshot,
+    platform: PlatformModule,
+    purpose: "login" | "user",
+    diagnostics?: BrowserAutomationDiagnosticTrace,
+  ): Promise<ProfileEntry> {
+    const reused = this.profiles.has(account.profileId);
+    diagnostics?.report({
+      component: "browser",
+      event: "browser.context.opening",
+      details: { purpose, headless: false },
+    });
+    try {
+      const entry = await this.ensureContext(account, platform, false);
+      diagnostics?.report({
+        component: "browser",
+        event: reused ? "browser.context.reused" : "browser.context.opened",
+        details: {
+          purpose,
+          browserChannel: entry.browser.channel,
+          headless: entry.browser.headless,
+        },
+      });
+      return entry;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "BrowserLaunchError" &&
+        "failures" in error &&
+        Array.isArray(error.failures)
+      ) {
+        for (const failure of error.failures) {
+          if (
+            !failure ||
+            typeof failure.channel !== "string" ||
+            typeof failure.message !== "string"
+          )
+            continue;
+          diagnostics?.report({
+            component: "browser",
+            event: "browser.launch_candidate.failed",
+            level: "warn",
+            details: {
+              purpose,
+              browserChannel: failure.channel,
+              message: failure.message,
+            },
+          });
+        }
+      }
+      diagnostics?.report({
+        component: "browser",
+        event: "browser.context.open_failed",
+        level: "error",
+        details: {
+          purpose,
+          code: "BROWSER_CONTEXT_OPEN_FAILED",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          message:
+            error instanceof Error && error.name === "BrowserLaunchError"
+              ? "All supported browser launch candidates failed"
+              : error instanceof Error
+                ? error.message
+                : "Unable to open browser context",
+        },
+      });
+      throw error;
+    }
+  }
+
   async openForPublication(
     account: PlatformAccountSnapshot,
     platform: PlatformModule,
@@ -289,7 +422,31 @@ export class PlaywrightBrowserSessionHost {
     diagnostics = isolateDiagnostics(diagnostics);
     return this.withProfileTransition(account.profileId, async () => {
       const reusedContext = this.profiles.has(account.profileId);
-      const entry = await this.ensureContext(account, platform, false);
+      diagnostics?.report({
+        component: "browser",
+        event: "browser.context.opening",
+        details: { purpose: "publish", headless: false },
+      });
+      let entry: ProfileEntry;
+      try {
+        entry = await this.ensureContext(account, platform, false);
+      } catch (error) {
+        diagnostics?.report({
+          component: "browser",
+          event: "browser.context.open_failed",
+          level: "error",
+          details: {
+            purpose: "publish",
+            code: "BROWSER_CONTEXT_OPEN_FAILED",
+            errorName: error instanceof Error ? error.name : "UnknownError",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Unable to open browser context",
+          },
+        });
+        throw error;
+      }
       diagnostics?.report({
         component: "browser",
         event: reusedContext
@@ -431,7 +588,31 @@ export class PlaywrightBrowserSessionHost {
         )
           throw new Error("此平台发布期间暂不支持并行同步");
         const reusedContext = this.profiles.has(account.profileId);
-        const entry = await this.ensureContext(account, platform, true);
+        diagnostics?.report({
+          component: "browser",
+          event: "browser.context.opening",
+          details: { purpose: "sync", headless: true },
+        });
+        let entry: ProfileEntry;
+        try {
+          entry = await this.ensureContext(account, platform, true);
+        } catch (error) {
+          diagnostics?.report({
+            component: "browser",
+            event: "browser.context.open_failed",
+            level: "error",
+            details: {
+              purpose: "sync",
+              code: "BROWSER_CONTEXT_OPEN_FAILED",
+              errorName: error instanceof Error ? error.name : "UnknownError",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Unable to open browser context",
+            },
+          });
+          throw error;
+        }
         diagnostics?.report({
           component: "browser",
           event: reusedContext
@@ -507,6 +688,9 @@ export class PlaywrightBrowserSessionHost {
       async fetchJson(url: string) {
         const direct = await probe.fetchJson(url);
         if (direct.ok && direct.body !== null) return direct;
+        // Only transport compatibility failures justify navigation and a retry.
+        // Authentication, rate limits and challenge pages must stop here too.
+        if (![404, 405].includes(direct.status)) return direct;
         await ensurePage();
         return probe.fetchJson(url);
       },
@@ -543,6 +727,22 @@ export class PlaywrightBrowserSessionHost {
       }
     }
     throw new Error("任务页面已关闭");
+  }
+
+  hasPublicationPage(publicationId: string): boolean {
+    return [...this.profiles.values()].some((entry) =>
+      [...entry.pages.values()].some(
+        (page) => page.publicationId === publicationId && !page.page.isClosed(),
+      ),
+    );
+  }
+
+  hasAnyPublicationPage(): boolean {
+    return [...this.profiles.values()].some((entry) =>
+      [...entry.pages.values()].some(
+        (page) => page.purpose === "publish" && !page.page.isClosed(),
+      ),
+    );
   }
 
   private hasPublication(entry: ProfileEntry) {

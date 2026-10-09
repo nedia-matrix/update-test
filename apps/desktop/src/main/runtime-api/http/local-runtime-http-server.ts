@@ -5,6 +5,8 @@ import {
 } from "node:http";
 
 import type { LocalRuntimeStatus } from "../../../bridge/contracts.js";
+import type { DiagnosticTraceService } from "@nedia-matrix/diagnostics";
+import { randomUUID } from "node:crypto";
 
 import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 import { writeJson } from "./http-json.js";
@@ -19,6 +21,7 @@ interface LocalRuntimeHttpServerOptions {
   application: NediaMatrixUseCases;
   handshake: LocalRuntimeHandshake;
   port?: number;
+  diagnostics?: Pick<DiagnosticTraceService, "start">;
 }
 
 export function readLocalRuntimePort(value: unknown): number {
@@ -121,7 +124,11 @@ export class LocalRuntimeHttpServer {
   }
 
   private handle(request: IncomingMessage, response: ServerResponse): void {
+    const startedAt = Date.now();
+    let rejectionCode: string | undefined;
+    this.observeResponse(request, response, startedAt, () => rejectionCode);
     if (!this.hasValidHost(request)) {
+      rejectionCode = "INVALID_HOST";
       writeJson(response, 400, { code: "INVALID_HOST" });
       return;
     }
@@ -149,8 +156,73 @@ export class LocalRuntimeHttpServer {
     }
   }
 
+  private observeResponse(
+    request: IncomingMessage,
+    response: ServerResponse,
+    startedAt: number,
+    rejectionCode: () => string | undefined,
+  ): void {
+    let completed = false;
+    const finish = (aborted: boolean) => {
+      if (completed) return;
+      completed = true;
+      const durationMs = Date.now() - startedAt;
+      const route = normalizeRuntimeRoute(request.url);
+      if (
+        !aborted &&
+        response.statusCode < 400 &&
+        (route === "/v1/events" || durationMs < 5_000)
+      )
+        return;
+      const trace = this.options.diagnostics?.start({
+        operation: "runtime.request",
+        requestId: randomUUID(),
+      });
+      const outcome =
+        aborted || response.statusCode >= 500
+          ? "failed"
+          : response.statusCode >= 400
+            ? "rejected"
+            : "completed";
+      trace?.report({
+        component: "runtime",
+        event: aborted
+          ? "runtime.request.connection_aborted"
+          : "runtime.request.completed",
+        level: aborted || response.statusCode >= 500 ? "error" : "info",
+        details: {
+          ...(aborted
+            ? { code: "RUNTIME_CONNECTION_ABORTED", retryable: true }
+            : rejectionCode()
+              ? { code: rejectionCode(), retryable: false }
+              : {}),
+          method: request.method ?? "UNKNOWN",
+          route,
+          statusCode: response.statusCode,
+          durationMs,
+        },
+      });
+      trace?.finish({ outcome });
+    };
+    response.once("finish", () => finish(false));
+    response.once("close", () => finish(!response.writableFinished));
+  }
+
   private hasValidHost(request: IncomingMessage): boolean {
     if (this.boundPort === null || !request.headers.host) return false;
     return request.headers.host === `${LOOPBACK_HOST}:${this.boundPort}`;
   }
+}
+
+function normalizeRuntimeRoute(value: string | undefined): string {
+  const pathname = (value ?? "/").split(/[?#]/, 1)[0] ?? "/";
+  return pathname
+    .replace(
+      /^\/v1\/publications\/[A-Za-z0-9._~-]{1,128}$/,
+      "/v1/publications/:publicationId",
+    )
+    .replace(
+      /^\/v1\/accounts\/[A-Za-z0-9._~-]{1,128}(?=\/|$)/,
+      "/v1/accounts/:accountId",
+    );
 }

@@ -1,7 +1,11 @@
 import type { MatrixDesktopApi } from "../bridge/api.js";
 import { ipcChannels } from "../bridge/channels.js";
 import type {
-  FindAutomationTraceRequest,
+  FindDiagnosticTraceRequest,
+  ApplicationUpdateState,
+  ExportDiagnosticTraceRequest,
+  ReadDiagnosticTraceRequest,
+  ReadDiagnosticAttachmentRequest,
   OpenApplicationUpdateDownloadRequest,
   SetLocalRuntimeRunningRequest,
 } from "../bridge/contracts.js";
@@ -12,6 +16,9 @@ import type {
 } from "@nedia-matrix/account-management";
 import type {
   OpenPublicationRequest,
+  PublicationAttentionResolution,
+  PublicationQuery,
+  RecreatedPublicationDraft,
   PreparePublishDraftRequest,
   PublishResultUpdate,
   SelectPublishMediaRequest,
@@ -19,6 +26,19 @@ import type {
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: MatrixDesktopApi = {
+  getPreferences: (request) =>
+    ipcRenderer.invoke(ipcChannels.getPreferences, request),
+  updatePreferences: (request) =>
+    ipcRenderer.invoke(ipcChannels.updatePreferences, request),
+  getApplicationUpdateState: () => ipcRenderer.invoke(ipcChannels.getApplicationUpdateState),
+  downloadApplicationUpdate: () => ipcRenderer.invoke(ipcChannels.downloadApplicationUpdate),
+  cancelApplicationUpdateDownload: () => ipcRenderer.invoke(ipcChannels.cancelApplicationUpdateDownload),
+  showApplicationUpdateFile: () => ipcRenderer.invoke(ipcChannels.showApplicationUpdateFile),
+  onApplicationUpdateChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: ApplicationUpdateState) => listener(state);
+    ipcRenderer.on(ipcChannels.applicationUpdateChanged, handler);
+    return () => ipcRenderer.removeListener(ipcChannels.applicationUpdateChanged, handler);
+  },
   checkForApplicationUpdate: () =>
     ipcRenderer.invoke(ipcChannels.checkForApplicationUpdate),
   openApplicationUpdateDownload: (
@@ -55,7 +75,27 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.selectPublishMedia, request),
   preparePublishDraft: (request: PreparePublishDraftRequest) =>
     ipcRenderer.invoke(ipcChannels.preparePublishDraft, request),
-  listPublications: () => ipcRenderer.invoke(ipcChannels.listPublications),
+  queryPublications: (request: PublicationQuery) =>
+    ipcRenderer.invoke(ipcChannels.queryPublications, request),
+  getPublicationTask: (request: OpenPublicationRequest) =>
+    ipcRenderer.invoke(ipcChannels.getPublicationTask, request),
+  getPublicationPlatformContent: (request: OpenPublicationRequest) =>
+    ipcRenderer.invoke(ipcChannels.getPublicationPlatformContent, request),
+  recreatePublicationDraft: (
+    request: OpenPublicationRequest,
+  ): Promise<RecreatedPublicationDraft> =>
+    ipcRenderer.invoke(ipcChannels.recreatePublicationDraft, request),
+  resolvePublicationAttention: (request: {
+    publicationId: string;
+    resolution: PublicationAttentionResolution;
+    manualPlatformContentId?: string;
+  }) => ipcRenderer.invoke(ipcChannels.resolvePublicationAttention, request),
+  selectPublicationContent: (request) =>
+    ipcRenderer.invoke(ipcChannels.selectPublicationContent, request),
+  reopenPublicationAttention: (request: { publicationId: string }) =>
+    ipcRenderer.invoke(ipcChannels.reopenPublicationAttention, request),
+  removePublicationArchiveRecord: (request) =>
+    ipcRenderer.invoke(ipcChannels.removePublicationArchiveRecord, request),
   openPublicationReview: (request: OpenPublicationRequest) =>
     ipcRenderer.invoke(ipcChannels.openPublicationReview, request),
   openPublication: (request: OpenPublicationRequest) =>
@@ -69,10 +109,16 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.getLocalRuntimeStatus),
   setLocalRuntimeRunning: (request: SetLocalRuntimeRunningRequest) =>
     ipcRenderer.invoke(ipcChannels.setLocalRuntimeRunning, request),
-  openAutomationLogDirectory: () =>
-    ipcRenderer.invoke(ipcChannels.openAutomationLogDirectory),
-  findAutomationTrace: (request: FindAutomationTraceRequest) =>
-    ipcRenderer.invoke(ipcChannels.findAutomationTrace, request),
+  openDiagnosticDirectory: () =>
+    ipcRenderer.invoke(ipcChannels.openDiagnosticDirectory),
+  findDiagnosticTrace: (request: FindDiagnosticTraceRequest) =>
+    ipcRenderer.invoke(ipcChannels.findDiagnosticTrace, request),
+  readDiagnosticTrace: (request: ReadDiagnosticTraceRequest) =>
+    ipcRenderer.invoke(ipcChannels.readDiagnosticTrace, request),
+  readDiagnosticAttachment: (request: ReadDiagnosticAttachmentRequest) =>
+    ipcRenderer.invoke(ipcChannels.readDiagnosticAttachment, request),
+  exportDiagnosticTrace: (request: ExportDiagnosticTraceRequest) =>
+    ipcRenderer.invoke(ipcChannels.exportDiagnosticTrace, request),
 };
 
 contextBridge.exposeInMainWorld("matrix", Object.freeze(api));

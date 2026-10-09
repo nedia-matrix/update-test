@@ -1,0 +1,24 @@
+{
+  "name": "@nedia-matrix/diagnostics",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@nedia-matrix/tsconfig": "workspace:*",
+    "@types/node": "^26.1.2",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -9,6 +9,7 @@ import type {
   PublicationAssetRole,
   RemotePublicationAsset,
 } from "@nedia-matrix/publishing";
+import type { DiagnosticTraceService } from "@nedia-matrix/diagnostics";
 
 import type { ContentAddressedPublicationAssetStore } from "./content-addressed-asset-store.js";
 
@@ -21,6 +22,7 @@ interface RemoteAssetDownloaderOptions {
   timeoutMs?: number;
   resolveHost?: (hostname: string) => Promise<readonly string[]>;
   now?: () => Date;
+  diagnostics?: Pick<DiagnosticTraceService, "start">;
 }
 
 const redirectStatuses = new Set([301, 302, 303, 307, 308]);
@@ -51,6 +53,15 @@ export class RemoteAssetDownloader {
     }
     if (assets.length === 0)
       throw new TypeError("At least one asset is required");
+    const trace = this.options.diagnostics?.start({
+      operation: "asset.download",
+      requestId,
+    });
+    trace?.report({
+      component: "network",
+      event: "asset.download.started",
+      details: { assetCount: assets.length },
+    });
     await mkdir(this.options.stagingRoot, { recursive: true });
     const stagingDirectory = await mkdtemp(
       join(this.options.stagingRoot, `${requestId}-`),
@@ -61,6 +72,11 @@ export class RemoteAssetDownloader {
     try {
       for (const [index, asset] of assets.entries()) {
         validateAsset(asset);
+        trace?.report({
+          component: "network",
+          event: "asset.download.item_started",
+          details: { assetIndex: index, attempt: 1, url: asset.url },
+        });
         const stagedPath = join(stagingDirectory, `${index}.download`);
         const staged = await this.downloadOne(asset, stagedPath);
         taskBytes += staged.size;
@@ -73,8 +89,9 @@ export class RemoteAssetDownloader {
           mediaType: staged.mediaType,
         });
         if (committed.created) newlyCreatedPaths.push(committed.relativePath);
+        const { statusCode, ...assetMetadata } = staged;
         downloaded.push({
-          ...staged,
+          ...assetMetadata,
           created: committed.created,
           resourceReference: committed.absolutePath,
           localRelativePath: committed.relativePath,
@@ -86,9 +103,38 @@ export class RemoteAssetDownloader {
             this.options.now ?? (() => new Date())
           )().toISOString(),
         });
+        trace?.report({
+          component: "network",
+          event: "asset.download.item_completed",
+          details: {
+            assetIndex: index,
+            byteSize: staged.size,
+            mimeType: staged.mediaType,
+            statusCode,
+            stage: "sha256_verified_and_stored",
+          },
+        });
       }
+      trace?.finish({ outcome: "completed" });
       return downloaded;
     } catch (error) {
+      trace?.report({
+        component: "network",
+        event: "asset.download.failed",
+        level: "error",
+        details: {
+          code: classifyDownloadError(error),
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          message:
+            error instanceof Error ? error.message : "Asset download failed",
+          retryable: isRetryableDownloadError(error),
+        },
+      });
+      trace?.finish({
+        outcome: "failed",
+        message:
+          error instanceof Error ? error.message : "Asset download failed",
+      });
       await Promise.all(
         newlyCreatedPaths.map((relativePath) =>
           this.options.assetStore.remove(relativePath),
@@ -125,6 +171,7 @@ export class RemoteAssetDownloader {
     mediaType: RemotePublicationAsset["mediaType"];
     size: number;
     sourceOrigin: string;
+    statusCode: number;
   }> {
     const { response, sourceOrigin } = await this.fetchFollowingRedirects(
       asset.url,
@@ -163,6 +210,7 @@ export class RemoteAssetDownloader {
       mediaType: asset.mediaType,
       size,
       sourceOrigin,
+      statusCode: response.status,
     };
   }
 
@@ -194,6 +242,22 @@ export class RemoteAssetDownloader {
     }
     throw new Error("Too many asset redirects");
   }
+}
+
+function classifyDownloadError(error: unknown): string {
+  if (error instanceof TypeError) return "ASSET_REQUEST_REJECTED";
+  if (error instanceof DOMException && error.name === "AbortError")
+    return "ASSET_DOWNLOAD_TIMEOUT";
+  if (error instanceof Error && error.message.includes("size limit"))
+    return "ASSET_SIZE_LIMIT";
+  if (error instanceof Error && error.message.includes("HTTP"))
+    return "ASSET_HTTP_ERROR";
+  return "ASSET_DOWNLOAD_FAILED";
+}
+
+function isRetryableDownloadError(error: unknown): boolean {
+  const code = classifyDownloadError(error);
+  return code === "ASSET_DOWNLOAD_TIMEOUT" || code === "ASSET_HTTP_ERROR";
 }
 
 function validateAsset(asset: RemotePublicationAsset): void {

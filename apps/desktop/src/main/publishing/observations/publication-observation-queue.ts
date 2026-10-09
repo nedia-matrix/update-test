@@ -17,6 +17,12 @@ interface PendingObservation {
   resolve: () => void;
 }
 
+interface PublicationObservationRetryHooks {
+  onRetryStarted?(event: PublishObservationEvent): void;
+  onRetrySucceeded?(event: PublishObservationEvent): void;
+  onRetryFailed?(event: PublishObservationEvent, error: unknown): void;
+}
+
 export class PublicationObservationQueue {
   private readonly pending = new Map<string, PendingObservation>();
   private retrying = false;
@@ -29,6 +35,7 @@ export class PublicationObservationQueue {
     private readonly onError: (error: unknown) => void,
     private readonly commit: (operation: () => void) => void = (operation) =>
       operation(),
+    private readonly retryHooks: PublicationObservationRetryHooks = {},
   ) {}
 
   get pendingCount(): number {
@@ -80,11 +87,15 @@ export class PublicationObservationQueue {
     }
   }
 
-  private project(event: PublishObservationEvent): boolean {
+  private project(
+    event: PublishObservationEvent,
+    captureError?: (error: unknown) => void,
+  ): boolean {
     try {
       this.apply(event);
     } catch (error) {
       this.onError(error);
+      captureError?.(error);
       return false;
     }
     this.onPersisted(event);
@@ -110,17 +121,28 @@ export class PublicationObservationQueue {
     this.retrying = true;
     try {
       for (const [eventId, pending] of [...this.pending.entries()]) {
+        this.retryHooks.onRetryStarted?.(pending.event);
         if (!pending.inboxStored) {
           try {
             this.inbox.append(pending.event);
             pending.inboxStored = true;
           } catch (error) {
             this.onError(error);
+            this.retryHooks.onRetryFailed?.(pending.event, error);
             break;
           }
         }
-        if (!this.project(pending.event)) break;
+        let projectionError: unknown;
+        if (
+          !this.project(pending.event, (error) => {
+            projectionError = error;
+          })
+        ) {
+          this.retryHooks.onRetryFailed?.(pending.event, projectionError);
+          break;
+        }
         this.pending.delete(eventId);
+        this.retryHooks.onRetrySucceeded?.(pending.event);
         pending.resolve();
       }
     } finally {

@@ -5,6 +5,7 @@ import {
   writeFileSync,
   rmSync,
   existsSync,
+  readdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,7 +15,10 @@ const state = vi.hoisted(() => ({ directory: "", exit: vi.fn() }));
 vi.mock("electron", () => ({
   app: { getPath: () => state.directory, exit: state.exit },
 }));
-import { DesktopRuntime } from "../src/main/bootstrap/desktop-runtime.js";
+import {
+  DesktopRuntime,
+  flushStartupFailureDiagnostics,
+} from "../src/main/bootstrap/desktop-runtime.js";
 
 afterEach(() => {
   if (state.directory)
@@ -47,4 +51,26 @@ it("uses SQLite by default in normal userData and preserves legacy sources acros
   restarted.requestQuit();
   await vi.waitFor(() => expect(state.exit).toHaveBeenCalledWith(0));
   expect(readFileSync(source, "utf8")).toBe("changed frozen source");
+});
+
+it("persists startup diagnostics when the business SQLite file is corrupt", async () => {
+  state.directory = mkdtempSync(join(tmpdir(), "matrix-corrupt-storage-test-"));
+  writeFileSync(
+    join(state.directory, "matrix-metadata.sqlite"),
+    "invalid SQLite data",
+  );
+
+  expect(() => new DesktopRuntime()).toThrow();
+  await flushStartupFailureDiagnostics();
+  const logDirectory = join(state.directory, "diagnostics", "logs");
+  const records = readdirSync(logDirectory)
+    .flatMap((name) =>
+      readFileSync(join(logDirectory, name), "utf8").trim().split("\n"),
+    )
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string });
+  expect(records.map(({ event }) => event)).toContain(
+    "persistence.sqlite.open_failed",
+  );
+  expect(records.map(({ event }) => event)).toContain("trace.failed");
 });

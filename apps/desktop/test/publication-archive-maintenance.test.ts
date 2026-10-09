@@ -226,6 +226,48 @@ describe("PublicationArchiveMaintenance", () => {
     expect(publications.records.has("newest")).toBe(true);
   });
 
+  it("rechecks activity for each cleanup candidate before deletion", async () => {
+    const publications = new MemoryPublications();
+    publications.save(publication("becomes-active", { path: pathA }));
+    const assets = new MemoryAssets();
+    assets.files.set(pathA, 60);
+    let checks = 0;
+    const maintenance = new PublicationArchiveMaintenance(
+      publications,
+      assets,
+      {
+        hasActiveTask: () => ++checks > 1,
+        now: () => new Date("2026-09-01T00:00:00.000Z"),
+      },
+    );
+    const result = await maintenance.cleanup({ maxBytes: 0 });
+    expect(checks).toBe(2);
+    expect(result.removedPublicationIds).toEqual([]);
+    expect(publications.get("becomes-active")).toBeDefined();
+    expect(assets.files.has(pathA)).toBe(true);
+  });
+
+  it("reports partial asset cleanup failures after removing the archive", async () => {
+    const publications = new MemoryPublications();
+    publications.save(publication("failed-cleanup", { path: pathA }));
+    const assets = new MemoryAssets();
+    assets.files.set(pathA, 60);
+    assets.remove = async () => {
+      throw new Error("disk busy");
+    };
+    const reports: string[] = [];
+    const maintenance = new PublicationArchiveMaintenance(
+      publications,
+      assets,
+      { hasActiveTask: () => false, now: () => new Date() },
+      { report: ({ event }) => reports.push(event) },
+    );
+    const result = await maintenance.removePublication("failed-cleanup");
+    expect(result.failedAssetCount).toBe(1);
+    expect(result.removedPublicationIds).toEqual(["failed-cleanup"]);
+    expect(reports).toEqual(["publication.archive.asset_cleanup_failed"]);
+  });
+
   it("only deletes shared content after its final publication is manually removed", async () => {
     const { assets, maintenance } = fixture(
       [
@@ -244,6 +286,41 @@ describe("PublicationArchiveMaintenance", () => {
       reclaimedBytes: 60,
     });
     expect(assets.files.has(pathA)).toBe(false);
+  });
+
+  it("does not delete unrelated unreferenced files during a record deletion", async () => {
+    const { assets, maintenance } = fixture(
+      [publication("one", { path: pathA })],
+      [
+        [pathA, 60],
+        [pathB, 40],
+      ],
+    );
+    const result = await maintenance.removePublication("one");
+    expect(result.removedAssetCount).toBe(1);
+    expect(assets.files.has(pathA)).toBe(false);
+    expect(assets.files.has(pathB)).toBe(true);
+  });
+
+  it("defers binary cleanup while another publication may use the same asset", async () => {
+    const publications = new MemoryPublications();
+    publications.save(publication("one", { path: pathA }));
+    const assets = new MemoryAssets();
+    assets.files.set(pathA, 60);
+    const maintenance = new PublicationArchiveMaintenance(
+      publications,
+      assets,
+      {
+        hasActiveTask: () => false,
+        hasActiveAssetUsers: () => true,
+        now: () => new Date(),
+      },
+    );
+
+    const result = await maintenance.removePublication("one");
+    expect(result.removedPublicationIds).toEqual(["one"]);
+    expect(result.removedAssetCount).toBe(0);
+    expect(assets.files.has(pathA)).toBe(true);
   });
 
   it("preserves retained archives during cleanup but allows explicit removal", async () => {

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@nedia-matrix/automation-engine": "workspace:*",
+    "@nedia-matrix/diagnostics": "workspace:*",
     "@nedia-matrix/platform-sdk": "workspace:*",
     "playwright": "^1.62.1"
   },

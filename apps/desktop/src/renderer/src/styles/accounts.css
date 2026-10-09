@@ -1,0 +1,177 @@
+.account-workspace {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.account-avatar.account-avatar-large {
+  width: 52px;
+  height: 52px;
+  border-radius: 13px;
+  font-size: 1rem;
+}
+.account-profile-copy {
+  max-width: min(460px, 42vw);
+}
+.account-profile-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.account-profile-copy .account-profile-description {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-overview {
+  display: grid;
+  gap: 14px;
+}
+.account-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.account-stat {
+  display: grid;
+  gap: 7px;
+  padding: 15px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.account-stat small {
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+}
+.account-stat strong {
+  font-size: 1.15rem;
+  font-weight: 690;
+}
+.account-recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+button.account-recent-card {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  justify-content: stretch;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  line-height: normal;
+  text-align: left;
+}
+button.account-recent-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+button.account-recent-card[aria-disabled="true"] {
+  cursor: default;
+}
+.account-recent-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-muted);
+  object-fit: cover;
+}
+.account-recent-cover-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+.account-recent-card-body {
+  display: grid;
+  gap: 12px;
+  padding: 11px 12px 12px;
+}
+.account-recent-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.account-recent-card-heading strong {
+  overflow: hidden;
+  flex: 1;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-recent-card-heading small {
+  flex: none;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  font-size: 0.59rem;
+}
+.account-recent-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.account-recent-metrics > span {
+  display: grid;
+  gap: 3px;
+}
+.account-recent-metrics small {
+  color: var(--text-tertiary);
+  font-size: 0.59rem;
+}
+.account-recent-metrics strong {
+  color: var(--text-secondary);
+  font-size: 0.63rem;
+}
+.account-empty-workspace {
+  min-height: calc(100vh - 80px);
+}
+
+.dialog-backdrop {
+  position: fixed;
+  z-index: 100;
+  display: grid;
+  inset: 0;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 18 24 / 66%);
+}
+.account-dialog {
+  width: min(680px, 100%);
+  max-height: min(620px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+}
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.dialog-header h2 {
+  margin-bottom: 4px;
+  font-size: 0.94rem;
+}
+.dialog-header p {
+  margin-bottom: 0;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+}
+.dialog-platform-grid {
+  padding: 16px;
+}

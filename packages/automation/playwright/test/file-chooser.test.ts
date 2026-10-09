@@ -14,7 +14,13 @@ async function fixture(
     | "covered"
     | "trial-fail",
 ) {
-  const page = new EventEmitter();
+  const context = {};
+  const page = Object.assign(new EventEmitter(), {
+    context: () => context,
+    isClosed: () => false,
+    mouse: { move: vi.fn(async () => undefined) },
+    evaluate: vi.fn(async () => ({ width: 1366, height: 768 })),
+  });
   const setFiles = vi.fn();
   const setInputFiles = vi.fn();
   const dispose = vi.fn();
@@ -54,6 +60,16 @@ async function fixture(
         action === "direct"
           ? null
           : {
+              scrollIntoViewIfNeeded: () => trialClick(),
+              boundingBox: async () => ({
+                x: 10,
+                y: 10,
+                width: 200,
+                height: 80,
+              }),
+              evaluate: async (_callback: unknown, argument?: unknown) =>
+                argument ? true : { x: 0, y: 0 },
+              isEnabled: async () => true,
               click: (options: { trial?: boolean }) =>
                 options.trial ? trialClick() : click(),
             },
@@ -80,7 +96,7 @@ describe("file chooser upload", () => {
       const upload = driver.uploadFiles(target, ["/tmp/a.png"]);
       await vi.advanceTimersByTimeAsync(99);
       expect(setFiles).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
+      await vi.runAllTimersAsync();
       await upload;
       expect(setFiles).toHaveBeenCalledOnce();
     } finally {
@@ -95,12 +111,12 @@ describe("file chooser upload", () => {
       timeout: 5_000,
     });
     expect(page.listenerCount("filechooser")).toBe(0);
-    expect(page.listenerCount("close")).toBe(0);
+    expect(page.listenerCount("close")).toBe(1);
   });
   it.each([
     ["wrong", "file_chooser_target_mismatch"],
     ["timeout", "file_chooser_timeout"],
-    ["close", "file_chooser_page_closed"],
+    ["close", "file_chooser_cancelled"],
     ["fail", "click_failed"],
   ] as const)(
     "cleans up after %s without fallback or retry",
@@ -114,7 +130,7 @@ describe("file chooser upload", () => {
       expect(setInputFiles).not.toHaveBeenCalled();
       expect(click).toHaveBeenCalledOnce();
       expect(page.listenerCount("filechooser")).toBe(0);
-      expect(page.listenerCount("close")).toBe(0);
+      expect(page.listenerCount("close")).toBe(action === "close" ? 0 : 1);
     },
     10_000,
   );
@@ -139,7 +155,7 @@ describe("file chooser upload", () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(page.listenerCount("filechooser")).toBe(0);
   });
-  it("does not hide non-actionability errors from the trial", async () => {
+  it("does not hide non-actionability errors from the preflight", async () => {
     const { driver, target, setInputFiles, click, dispose } =
       await fixture("trial-fail");
     await expect(driver.uploadFiles(target, ["/tmp/a.png"])).rejects.toThrow(

@@ -33,6 +33,10 @@ export function validatePublishDraftRequest(
       (typeof request.requestId !== "string" ||
         request.requestId.trim().length === 0 ||
         request.requestId.length > 128)) ||
+    (request.sourcePublicationId !== undefined &&
+      (typeof request.sourcePublicationId !== "string" ||
+        request.sourcePublicationId.trim().length === 0 ||
+        request.sourcePublicationId.length > 128)) ||
     !isSubmissionMode(request.submissionMode) ||
     request.title.length > 200 ||
     request.body.length > 20_000

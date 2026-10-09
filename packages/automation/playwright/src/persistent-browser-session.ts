@@ -1,3 +1,4 @@
+import { bindProfileRequestPacer } from "./request-pacing.js";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
@@ -9,6 +10,14 @@ import type {
 } from "@nedia-matrix/platform-sdk";
 import { chromium, type BrowserContext, type Page } from "playwright";
 
+import {
+  fingerprintArguments,
+  loadBrowserRuntime,
+  saveBrowserRuntime,
+  verifyFingerprintBrowser,
+  type BrowserRuntimeConfiguration,
+  type StoredBrowserRuntime,
+} from "./browser-runtime.js";
 import { PlaywrightAutomationDriver } from "./automation-driver.js";
 import { isAllowedPlatformNavigation } from "./navigation-policy.js";
 import { createPlaywrightPublishObservationSession } from "./publish-observation-session.js";
@@ -25,6 +34,7 @@ export interface OpenPersistentBrowserSessionOptions {
   evidenceDirectory: string;
   headless?: boolean;
   preferredChannel?: string;
+  runtime?: BrowserRuntimeConfiguration;
 }
 
 export interface OpenedPersistentBrowserSession {
@@ -44,6 +54,21 @@ interface BrowserLaunchCandidate {
   options: PersistentBrowserOptions;
 }
 
+export class BrowserLaunchError extends Error {
+  readonly failures: readonly { channel: string; message: string }[];
+
+  constructor(
+    failures: readonly { channel: string; message: string }[],
+    fingerprint = false,
+  ) {
+    super(
+      `Unable to start a supported browser. ${fingerprint ? "Reinstall the configured fingerprint browser with pnpm browser:install:fingerprint; system fallback is disabled." : "Install Google Chrome or Microsoft Edge and try again."} ${failures.map(({ channel, message }) => `${channel}: ${message}`).join("\n")}`,
+    );
+    this.name = "BrowserLaunchError";
+    this.failures = failures;
+  }
+}
+
 type PersistentBrowserOptions = NonNullable<
   Parameters<typeof chromium.launchPersistentContext>[1]
 >;
@@ -59,41 +84,79 @@ export function browserLaunchCandidates(): BrowserLaunchCandidate[] {
 async function launchPersistentBrowser(
   profileDirectory: string,
   headless = false,
-  preferredChannel?: string,
+  preferredChannel: string | undefined,
+  runtime: StoredBrowserRuntime,
 ): Promise<{ context: BrowserContext; channel: string }> {
-  const failures: string[] = [];
-  // TODO 实现 headless==true时 获取系统窗口大小赋值给viewport
-  // const viewport = headless ? {width,height} : null
+  const failures: { channel: string; message: string }[] = [];
   const sharedOptions: PersistentBrowserOptions = {
     headless,
     chromiumSandbox: true,
-    viewport: null,
+    viewport: { width: runtime.width, height: runtime.height },
+    locale: runtime.locale,
+    timezoneId: runtime.timezoneId,
     acceptDownloads: true,
     handleSIGINT: false,
     handleSIGTERM: false,
     handleSIGHUP: false,
   };
 
-  const candidates = browserLaunchCandidates();
-  const selected = preferredChannel
-    ? candidates.filter((candidate) => candidate.name === preferredChannel)
+  if (runtime.provider === "fingerprint")
+    await verifyFingerprintBrowser(runtime.executablePath!);
+  const candidates =
+    runtime.provider === "fingerprint"
+      ? [
+          {
+            name: "Fingerprint Chromium",
+            options: { executablePath: runtime.executablePath },
+          },
+        ]
+      : browserLaunchCandidates();
+  const pinnedChannel =
+    runtime.provider === "fingerprint"
+      ? "Fingerprint Chromium"
+      : (runtime.channel ?? preferredChannel);
+  const selected = pinnedChannel
+    ? candidates.filter((candidate) => candidate.name === pinnedChannel)
     : candidates;
   for (const candidate of selected) {
+    let context: BrowserContext;
     try {
-      const context = await chromium.launchPersistentContext(profileDirectory, {
+      context = await chromium.launchPersistentContext(profileDirectory, {
         ...sharedOptions,
         ...candidate.options,
+        ignoreDefaultArgs: [
+          "--disable-component-extensions-with-background-pages",
+          "--disable-extensions",
+          // "--disable-default-apps"
+        ],
+        args: [
+          "--disable-dev-shm-usage",
+          "--disable-blink-features=AutomationControlled",
+          `--window-size=${runtime.width},${runtime.height}`,
+          ...(runtime.provider === "fingerprint"
+            ? fingerprintArguments(runtime.fingerprintSeed)
+            : []),
+          // "--window-size=1680,930",
+        ],
       });
-      return { context, channel: candidate.name };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      failures.push(`${candidate.name}: ${detail}`);
+      failures.push({ channel: candidate.name, message: detail });
+      continue;
     }
+    try {
+      await saveBrowserRuntime(profileDirectory, {
+        ...runtime,
+        channel: candidate.name,
+      });
+    } catch (error) {
+      await context.close();
+      throw error;
+    }
+    return { context, channel: candidate.name };
   }
 
-  throw new Error(
-    `Unable to start a supported browser. Install Google Chrome or Microsoft Edge and try again. ${failures.join("\n")}`,
-  );
+  throw new BrowserLaunchError(failures, runtime.provider === "fingerprint");
 }
 
 /** Legacy single-page adapter; Desktop uses the context and managed-page APIs. */
@@ -167,23 +230,21 @@ export async function openPersistentBrowserContext(
     throw new TypeError("Browser profile directory must be an absolute path");
   }
   await mkdir(options.profileDirectory, { recursive: true });
+  const runtime = await loadBrowserRuntime(
+    options.profileDirectory,
+    options.runtime,
+  );
   const { context, channel } = await launchPersistentBrowser(
     options.profileDirectory,
     options.headless,
     options.preferredChannel,
+    runtime,
   );
-  try {
-    await context.addInitScript(`Object.defineProperty(Navigator.prototype, "webdriver", {
-      configurable: true, get: () => false,
-    });`);
-    return {
-      context,
-      channel,
-      headless: options.headless ?? false,
-      close: () => context.close(),
-    };
-  } catch (error) {
-    await context.close();
-    throw error;
-  }
+  bindProfileRequestPacer(context, options.profileDirectory);
+  return {
+    context,
+    channel,
+    headless: options.headless ?? false,
+    close: () => context.close(),
+  };
 }

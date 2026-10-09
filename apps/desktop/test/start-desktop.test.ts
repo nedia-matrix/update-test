@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   exit: vi.fn(),
   showErrorBox: vi.fn(),
   construct: vi.fn(),
+  flushStartupFailureDiagnostics: vi.fn(async () => undefined),
+  preferencesIpc: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -18,8 +20,12 @@ vi.mock("electron", () => ({
   },
   dialog: { showErrorBox: mocks.showErrorBox },
 }));
+vi.mock("../src/main/preferences/register-preferences-ipc.js", () => ({
+  registerPreferencesIpc: mocks.preferencesIpc,
+}));
 
 vi.mock("../src/main/bootstrap/desktop-runtime.js", () => ({
+  flushStartupFailureDiagnostics: mocks.flushStartupFailureDiagnostics,
   DesktopRuntime: class {
     constructor(...args: unknown[]) {
       mocks.construct(...args);
@@ -42,20 +48,38 @@ it("starts the default runtime without a storage selector", async () => {
   await import("../src/main/bootstrap/start-desktop.js");
   await vi.waitFor(() => expect(mocks.openMainWindow).toHaveBeenCalledOnce());
   expect(mocks.construct).toHaveBeenCalledWith();
+  expect(mocks.preferencesIpc).toHaveBeenCalledOnce();
+  expect(mocks.preferencesIpc.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.construct.mock.invocationCallOrder[0]!,
+  );
   expect(mocks.start).toHaveBeenCalledOnce();
   expect(mocks.exit).not.toHaveBeenCalled();
 });
 
 it("reports database construction failure before starting business services", async () => {
+  let finishFlush: (() => void) | undefined;
+  mocks.flushStartupFailureDiagnostics.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finishFlush = resolve;
+      }),
+  );
   mocks.construct.mockImplementation(() => {
     throw new Error("invalid metadata");
   });
   vi.spyOn(console, "error").mockImplementation(() => {});
   await import("../src/main/bootstrap/start-desktop.js");
+  await vi.waitFor(() =>
+    expect(mocks.flushStartupFailureDiagnostics).toHaveBeenCalledOnce(),
+  );
+  expect(mocks.exit).not.toHaveBeenCalled();
+  finishFlush?.();
   await vi.waitFor(() => expect(mocks.exit).toHaveBeenCalledWith(1));
   expect(mocks.start).not.toHaveBeenCalled();
   expect(mocks.openMainWindow).not.toHaveBeenCalled();
   expect(mocks.showErrorBox).toHaveBeenCalledOnce();
+  expect(mocks.preferencesIpc).toHaveBeenCalledOnce();
+  expect(mocks.flushStartupFailureDiagnostics).toHaveBeenCalledOnce();
 });
 
 it("shows a safe startup error and exits without opening the main window", async () => {

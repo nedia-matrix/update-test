@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build ${{ matrix.platform }} package
@@ -20,12 +24,17 @@ jobs:
             runner: macos-latest
             package_command: pnpm desktop:package:mac
             artifact_name: mac-installers
-            artifact_path: apps/desktop/dist/*.dmg
+            artifact_path: |
+              apps/desktop/dist/*.dmg
+              apps/desktop/dist/*.zip
+              apps/desktop/dist/*.provenance.json
           - platform: Windows
             runner: windows-latest
             package_command: pnpm desktop:package:win
             artifact_name: windows-packages
-            artifact_path: apps/desktop/dist/*.exe
+            artifact_path: |
+              apps/desktop/dist/*.exe
+              apps/desktop/dist/*.provenance.json
 
     steps:
       - name: Checkout repository
@@ -57,7 +66,8 @@ jobs:
       - name: Package application
         run: ${{ matrix.package_command }}
         env:
-          NEDIA_UPDATE_SOURCE: github
+          NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
+          NEDIA_REQUIRE_UPDATE_KEYS: "1"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7
@@ -75,21 +85,47 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout signing scripts
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
       - name: Download installer artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
 
+      - name: Generate trusted update manifest
+        run: node scripts/update-manifest.mjs release-assets "${GITHUB_REF_NAME#v}" github
+        env:
+          NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
+          NEDIA_UPDATE_KEY_ID: ${{ vars.NEDIA_UPDATE_KEY_ID }}
+          NEDIA_UPDATE_PRIVATE_KEY: ${{ secrets.NEDIA_UPDATE_PRIVATE_KEY }}
+
       - name: Generate checksums
         shell: bash
         run: |
           cd release-assets
-          sha256sum -- * > SHA256SUMS.txt
+          sha256sum -- *.dmg *.zip *.exe update-manifest.json update-manifest.sig > SHA256SUMS.txt
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: release-assets/*
-          generate_release_notes: true
-          fail_on_unmatched_files: true
+      - name: Upload and verify draft, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          # Never overwrite assets of an existing tag, including a partial draft.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release already exists. Use a new version; a failed draft requires explicit manual recovery."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" release-assets/*.dmg release-assets/*.zip release-assets/*.exe release-assets/update-manifest.json release-assets/update-manifest.sig release-assets/SHA256SUMS.txt
+          verification_directory=$(mktemp -d)
+          gh release download "$GITHUB_REF_NAME" --dir "$verification_directory"
+          cd "$verification_directory"
+          sha256sum --check SHA256SUMS.txt
+          gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"

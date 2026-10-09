@@ -1,3 +1,8 @@
+import {
+  PlatformDataOperationError,
+  scrollForNextJsonResponse,
+  navigateForJsonResponses,
+} from "@nedia-matrix/platform-sdk";
 import type {
   PlatformAccountProfileCapability,
   PlatformAccountProfileData,
@@ -163,21 +168,14 @@ export const kuaishouAccountProfileCapability: PlatformAccountProfileCapability 
   {
     implementationStatus: "reference-derived",
     async read(client) {
-      const responsePromise = client.waitForJsonResponse({
-        method: "POST",
-        url: PROFILE_API_URL,
-        timeoutMs: 10_000,
-      });
-      const supplementResponsePromise = client.waitForJsonResponse({
-        method: "POST",
-        url: PROFILE_SUPPLEMENT_API_URL,
-        timeoutMs: 3_000,
-      });
-      await client.navigate(PROFILE_PAGE_URL);
-      const [response, supplementResponse] = await Promise.all([
-        responsePromise,
-        supplementResponsePromise,
-      ]);
+      const [response, supplementResponse] = await navigateForJsonResponses(
+        client,
+        PROFILE_PAGE_URL,
+        [
+          { method: "POST", url: PROFILE_API_URL, timeoutMs: 10_000 },
+          { method: "POST", url: PROFILE_SUPPLEMENT_API_URL, timeoutMs: 3_000 },
+        ],
+      );
       if (!response?.ok || response.body === null) {
         throw new Error("快手账号资料响应未出现");
       }
@@ -209,13 +207,11 @@ export const kuaishouContentCapability: PlatformContentCapability = {
     client,
     expectedExternalAccountId,
   ): Promise<PlatformContentReadResult> {
-    const responsePromise = client.waitForJsonResponse({
-      method: "POST",
-      url: CONTENT_API_URL,
-      timeoutMs: 10_000,
-    });
-    await client.navigate(CONTENT_PAGE_URL);
-    const response = await responsePromise;
+    const [response] = await navigateForJsonResponses(
+      client,
+      CONTENT_PAGE_URL,
+      [{ method: "POST", url: CONTENT_API_URL, timeoutMs: 10_000 }],
+    );
     if (!response?.ok || response.body === null) {
       throw new Error("快手作品列表响应未出现");
     }
@@ -245,15 +241,27 @@ export const kuaishouContentCapability: PlatformContentCapability = {
 
     while (pagesRead < MAX_CONTENT_PAGES) {
       const requestedAfterCursor = nextCursor;
-      const nextResponsePromise = client.waitForJsonResponse({
-        method: "POST",
-        url: CONTENT_API_URL,
-        timeoutMs: NEXT_PAGE_TIMEOUT_MS,
-        replayObserved: false,
-      });
-      const scroll = await client.scrollToEnd({
-        selector: CONTENT_SCROLL_SELECTOR,
-      });
+      let nextPage: Awaited<ReturnType<typeof scrollForNextJsonResponse>>;
+      try {
+        nextPage = await scrollForNextJsonResponse(client, {
+          selector: CONTENT_SCROLL_SELECTOR,
+          response: {
+            method: "POST",
+            url: CONTENT_API_URL,
+            timeoutMs: NEXT_PAGE_TIMEOUT_MS,
+            replayObserved: false,
+          },
+        });
+      } catch (error) {
+        if (!(error instanceof PlatformDataOperationError)) throw error;
+        return partialContentResult(
+          items,
+          pagesRead,
+          remoteTotal,
+          `快手作品第 ${pagesRead + 1} 页同步停止（${error.userMessage}）`,
+        );
+      }
+      const { scroll, response: nextResponse } = nextPage;
       if (!scroll.found) {
         return partialContentResult(
           items,
@@ -263,7 +271,6 @@ export const kuaishouContentCapability: PlatformContentCapability = {
         );
       }
 
-      const nextResponse = await nextResponsePromise;
       if (!nextResponse?.ok || nextResponse.body === null) {
         return partialContentResult(
           items,

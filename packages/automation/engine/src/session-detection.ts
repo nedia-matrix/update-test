@@ -35,6 +35,7 @@ const sessionProbeSchema = z.object({
 });
 const sessionDetectionPlanSchema = z.object({
   probes: z.array(sessionProbeSchema).default([]),
+  loggedOutUrl: z.string().url().optional(),
   domFallback: z
     .object({
       identityScheme: z.string().min(1),
@@ -160,6 +161,14 @@ export async function detectPlatformSession(
       if (detected) return detected;
     } catch {
       // A platform endpoint can be unavailable; continue to later probes and DOM.
+    }
+  }
+
+  if (plan.loggedOutUrl) {
+    const current = (await driver.currentUrl()).split(/[?#]/, 1)[0];
+    const loggedOut = plan.loggedOutUrl.split(/[?#]/, 1)[0];
+    if (current === loggedOut) {
+      return { status: "login_required", source: "dom" };
     }
   }
 

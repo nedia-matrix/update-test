@@ -1,0 +1,286 @@
+.app-shell {
+  height: 100%;
+  --sidebar-width: 188px;
+  --status-bar-height: 36px;
+}
+.app-main {
+  position: relative;
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 0;
+}
+.sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  padding: 14px 10px 0;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar-bg);
+  user-select: none;
+}
+.account-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 5px 5px 9px;
+}
+.account-sidebar-header strong {
+  font-size: 0.82rem;
+  font-weight: 680;
+}
+.account-navigation {
+  display: grid;
+  gap: 3px;
+  overflow: auto;
+}
+.account-navigation > button {
+  display: grid;
+  width: 100%;
+  min-height: 54px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: stretch;
+  column-gap: 9px;
+  row-gap: 3px;
+  padding: 7px 9px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.account-navigation > button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--sidebar-hover);
+}
+.account-navigation > button.active {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.sidebar-account-copy {
+  display: contents;
+}
+.account-navigation > button > .platform-logo {
+  grid-row: 1 / span 2;
+}
+.sidebar-account-copy strong,
+.sidebar-account-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-account-copy strong {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+.sidebar-account-copy small {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 0.62rem;
+  font-weight: 480;
+}
+.sidebar-account-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.sidebar-account-dot.account-authenticated {
+  background: var(--success);
+}
+.sidebar-account-dot.account-login_required {
+  background: var(--danger);
+}
+.sidebar-account-status {
+  display: flex;
+  grid-column: 3;
+  grid-row: 1;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.sidebar-account-status small {
+  font-size: 0.58rem;
+  font-weight: 520;
+}
+.account-navigation > .sidebar-empty-account {
+  display: flex;
+  min-height: 42px;
+  grid-template-columns: none;
+  justify-content: flex-start;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+.sidebar-status-bar {
+  display: flex;
+  height: var(--status-bar-height);
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  margin-inline: -10px;
+  padding: 0 8px 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.primary-navigation {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.primary-navigation a {
+  position: relative;
+  display: flex;
+  width: 28px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.primary-navigation a:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+.primary-navigation a.active {
+  background: var(--surface-active);
+  color: var(--text);
+}
+.primary-navigation a.active .icon {
+  color: var(--accent);
+}
+.primary-navigation a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.sidebar-version {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-dot,
+.status-indicator,
+.badge-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.runtime-running {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+}
+.runtime-stopped {
+  background: var(--danger);
+}
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 28px 36px;
+  background: var(--app-bg);
+}
+.page-stack {
+  display: grid;
+  width: 100%;
+  max-width: 1280px;
+  gap: 14px;
+  margin: 0 auto;
+}
+
+.workspace-header {
+  display: flex;
+  min-height: 82px;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+.workspace-header-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+.workspace-header-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.workspace-header-copy h1 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 1.16rem;
+  font-weight: 720;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-header-copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.69rem;
+  line-height: 1.45;
+}
+.workspace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+.workspace-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+.workspace-tabs > button {
+  position: relative;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.workspace-tabs > button:hover:not(:disabled) {
+  border: 0;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.workspace-tabs > button.active {
+  color: var(--text);
+}
+.workspace-tabs > button.active::after {
+  position: absolute;
+  right: 10px;
+  bottom: -1px;
+  left: 10px;
+  height: 2px;
+  background: var(--accent);
+  content: "";
+}

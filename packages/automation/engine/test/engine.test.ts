@@ -221,7 +221,11 @@ describe("automation definitions and execution", () => {
         },
       ],
     });
-    const driver = new MemoryDriver();
+    const driver = Object.assign(new MemoryDriver(), {
+      prepareCommit: async () => {
+        driver.actions.push("prepare-commit");
+      },
+    });
 
     await executeWorkflow(
       workflow,
@@ -235,6 +239,7 @@ describe("automation definitions and execution", () => {
     );
 
     expect(driver.actions).toEqual([
+      "prepare-commit",
       "commit:publish.submit:0:submission",
       "click:submit",
     ]);

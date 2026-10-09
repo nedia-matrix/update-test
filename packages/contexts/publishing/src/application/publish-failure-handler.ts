@@ -60,6 +60,7 @@ export function handlePublishFailure(
   if (classified) {
     return {
       status: "failed",
+      ...(current ? { publicationId: current.publication.id } : {}),
       code: classified.code,
       message,
       evidenceId: classified.evidenceId,
@@ -68,6 +69,7 @@ export function handlePublishFailure(
   if (error instanceof MediaSelectionUnavailableError) {
     return {
       status: "failed",
+      ...(current ? { publicationId: current.publication.id } : {}),
       code: "MEDIA_SELECTION_UNAVAILABLE",
       message: "媒体选择已失效，请重新选择文件",
       evidenceId: null,
@@ -75,6 +77,7 @@ export function handlePublishFailure(
   }
   return {
     status: "failed",
+    ...(current ? { publicationId: current.publication.id } : {}),
     code: "UNEXPECTED_ERROR",
     message,
     evidenceId: null,

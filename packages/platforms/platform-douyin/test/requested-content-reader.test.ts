@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 
 import { douyinRequestedContentCapability } from "../src/index.js";
 
@@ -7,6 +8,84 @@ function response(body: unknown) {
 }
 
 describe("Douyin requested content reader", () => {
+  const firstPage = response({
+    status_code: 0,
+    has_more: true,
+    max_cursor: "cursor-2",
+    total: 2,
+    aweme_list: [{ aweme_id: "content-1" }],
+  });
+  const client = (requestJson: ReturnType<typeof vi.fn>) => ({
+    navigate: async () => undefined,
+    requestJson,
+    waitForJsonResponse: async () => null,
+    scrollToEnd: async () => ({ found: true, moved: false, atEnd: false }),
+    dispose: () => undefined,
+  });
+  it.each([
+    { code: "rate_limited", reason: "平台请求受限" },
+    { code: "request_failed", reason: "网络请求失败" },
+  ] as const)(
+    "retains verified pages after $code without retrying or exposing request details",
+    async ({ code, reason }) => {
+      const requestJson = vi
+        .fn()
+        .mockResolvedValueOnce(firstPage)
+        .mockRejectedValueOnce(
+          new PlatformDataOperationError(
+            code,
+            "https://creator.example/api?token=secret",
+          ),
+        );
+      await expect(
+        douyinRequestedContentCapability.read(client(requestJson), "account-1"),
+      ).resolves.toMatchObject({
+        complete: false,
+        pagesRead: 1,
+        remoteTotal: 2,
+        items: [{ externalContentId: "content-1" }],
+        diagnostics: [expect.stringContaining(reason)],
+      });
+      expect(requestJson).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("fails when no page was read and propagates cancellation after a page", async () => {
+    const rateLimit = new PlatformDataOperationError(
+      "rate_limited",
+      "platform_rate_limited",
+    );
+    await expect(
+      douyinRequestedContentCapability.read(
+        client(vi.fn().mockRejectedValue(rateLimit)),
+        "account-1",
+      ),
+    ).rejects.toBe(rateLimit);
+    const cancelled = new Error("页面控制权已移交或自动操作已取消");
+    const requestJson = vi
+      .fn()
+      .mockResolvedValueOnce(firstPage)
+      .mockRejectedValueOnce(cancelled);
+    await expect(
+      douyinRequestedContentCapability.read(client(requestJson), "account-1"),
+    ).rejects.toBe(cancelled);
+  });
+  it("does not turn a later account mismatch into a partial success", async () => {
+    const requestJson = vi
+      .fn()
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(
+        response({
+          status_code: 0,
+          has_more: false,
+          aweme_list: [
+            { aweme_id: "content-2", author: { short_id: "another-account" } },
+          ],
+        }),
+      );
+    await expect(
+      douyinRequestedContentCapability.read(client(requestJson), "account-1"),
+    ).rejects.toThrow("账号与当前登录账号不一致");
+  });
   it("requests cursor pages with GET and deduplicates overlapping items", async () => {
     const navigate = vi.fn(async () => undefined);
     const requestJson = vi

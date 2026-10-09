@@ -6,6 +6,20 @@ export interface PreparedPublishText {
   tagsToAppend: readonly string[];
 }
 
+export function normalizePublishBody(
+  form: Pick<PlatformPublishFormCapability, "tagPolicy">,
+  body: string,
+): string {
+  if (form.tagPolicy?.placement !== "inline") return body;
+  // Match the separator inserted by inline-topic editors before a #topic.
+  // URL fragments are ordinary text and must keep their original spelling.
+  return body.replace(/\S+/gu, (word) =>
+    word.includes("://")
+      ? word
+      : word.replace(/([^#])#(?=[\p{L}\p{N}_])/gu, "$1 #"),
+  );
+}
+
 export function composePublishDescription(
   form: Pick<PlatformPublishFormCapability, "descriptionComposition">,
   input: { title: string; body: string },

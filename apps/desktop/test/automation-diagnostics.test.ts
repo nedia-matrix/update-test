@@ -9,25 +9,26 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-
-import { enforceAutomationDiagnosticRetention } from "../src/main/diagnostics/automation-diagnostic-retention.js";
 import type {
-  AutomationLogSink,
-  PendingAutomationLogRecord,
-} from "../src/main/diagnostics/automation-log-record.js";
-import { redactAutomationLogRecord } from "../src/main/diagnostics/automation-log-redaction.js";
-import { AutomationTraceService } from "../src/main/diagnostics/automation-trace-service.js";
-import { JsonlAutomationLogSink } from "../src/main/diagnostics/jsonl-automation-log-sink.js";
+  DiagnosticStore,
+  PendingDiagnosticRecord,
+} from "@nedia-matrix/diagnostics";
+import {
+  enforceDiagnosticRetention,
+  JsonlDiagnosticStore,
+  redactDiagnosticRecord,
+} from "@nedia-matrix/diagnostics";
+import { DesktopDiagnosticTraceService } from "../src/main/diagnostics/desktop-diagnostic-trace-service.js";
 
 function pending(
-  overrides: Partial<PendingAutomationLogRecord> = {},
-): PendingAutomationLogRecord {
+  overrides: Partial<PendingDiagnosticRecord> = {},
+): PendingDiagnosticRecord {
   return {
     timestamp: "2026-09-15T00:00:00.000Z",
     level: "info",
     sequence: 1,
     traceId: "11111111-1111-4111-8111-111111111111",
-    operation: "publish",
+    operation: "publication.prepare",
     component: "workflow",
     event: "workflow.started",
     publicationId: "publication-1",
@@ -37,7 +38,7 @@ function pending(
 
 describe("automation diagnostic redaction", () => {
   it("removes credentials, content, paths, URL parameters, and unknown fields", () => {
-    const record = redactAutomationLogRecord(
+    const record = redactDiagnosticRecord(
       pending({
         details: {
           url: "https://user:pass@example.test/publish?token=secret#draft",
@@ -66,7 +67,7 @@ describe("JSONL automation log sink", () => {
   it("writes parseable records, rotates, and finds a publication trace", async () => {
     const root = await mkdtemp(join(tmpdir(), "matrix-diagnostics-"));
     const directory = join(root, "logs");
-    const sink = new JsonlAutomationLogSink({
+    const sink = new JsonlDiagnosticStore({
       directory,
       maxFileBytes: 400,
       now: () => new Date("2026-09-15T00:00:00.000Z"),
@@ -100,7 +101,7 @@ describe("JSONL automation log sink", () => {
   it("reports queue pressure without blocking producers", async () => {
     const root = await mkdtemp(join(tmpdir(), "matrix-diagnostics-drop-"));
     const dropped: number[] = [];
-    const sink = new JsonlAutomationLogSink({
+    const sink = new JsonlDiagnosticStore({
       directory: join(root, "logs"),
       maxQueueSize: 1,
       now: () => new Date("2026-09-15T00:00:00.000Z"),
@@ -122,7 +123,7 @@ describe("JSONL automation log sink", () => {
   it("keeps a warning by evicting a lower-priority queued record", async () => {
     const root = await mkdtemp(join(tmpdir(), "matrix-diagnostics-priority-"));
     const dropped: Array<Readonly<Record<string, number>>> = [];
-    const sink = new JsonlAutomationLogSink({
+    const sink = new JsonlDiagnosticStore({
       directory: join(root, "logs"),
       maxQueueSize: 1,
       now: () => new Date("2026-09-15T00:00:00.000Z"),
@@ -148,19 +149,20 @@ describe("JSONL automation log sink", () => {
 
 describe("automation trace service", () => {
   it("correlates engine executions and publication IDs without leaking values", () => {
-    const records: PendingAutomationLogRecord[] = [];
-    const sink: AutomationLogSink = {
+    const records: PendingDiagnosticRecord[] = [];
+    const sink: DiagnosticStore = {
       report: (record) => records.push(record),
       flush: async () => undefined,
       close: async () => undefined,
       findTraceForPublication: async () => null,
+      readTrace: async () => [],
     };
-    const service = new AutomationTraceService(
+    const service = new DesktopDiagnosticTraceService(
       sink,
       () => new Date("2026-09-15T00:00:00.000Z"),
     );
     const trace = service.start({
-      operation: "publish",
+      operation: "publication.prepare",
       accountId: "account-1",
       platformId: "douyin",
       requestId: "request-1",
@@ -174,9 +176,17 @@ describe("automation trace service", () => {
       stepCount: 1,
       inputs: { body: { kind: "text", length: 20 } },
     });
+    execution.report({
+      type: "evidence.captured",
+      workflowId: "douyin.prepare",
+      evidenceId: "evidence-1",
+      capturedAt: "2026-09-15T00:00:00.000Z",
+      reasonCode: "workflow_failure",
+      relativeRef: `evidence/${trace.traceId}/evidence-1.png`,
+    });
     trace.finish({ outcome: "published" });
 
-    expect(records.map(({ sequence }) => sequence)).toEqual([1, 2, 3]);
+    expect(records.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4]);
     expect(records[1]).toMatchObject({
       traceId: trace.traceId,
       executionId: execution.executionId,
@@ -184,6 +194,10 @@ describe("automation trace service", () => {
       pageId: "page-1",
       workflowId: "douyin.prepare",
       details: { phase: "prepare" },
+    });
+    expect(redactDiagnosticRecord(records[2]!)).toMatchObject({
+      attachmentIds: ["evidence-1"],
+      details: { relativeRef: `evidence/${trace.traceId}/evidence-1.png` },
     });
     expect(service.activeTraceIds()).not.toContain(trace.traceId);
   });
@@ -197,15 +211,15 @@ describe("automation diagnostic retention", () => {
     const traceId = "11111111-1111-4111-8111-111111111111";
     await mkdir(join(evidence, traceId), { recursive: true });
     await mkdir(logs, { recursive: true });
-    await writeFile(join(logs, "automation-2026-01-01.jsonl"), "{}\n");
+    await writeFile(join(logs, "diagnostics-2026-01-01.jsonl"), "{}\n");
     await writeFile(join(logs, "keep.txt"), "user file");
     await writeFile(join(evidence, traceId, "aaaa.png"), "png");
     const old = new Date("2026-01-01T00:00:00.000Z");
     const { utimes } = await import("node:fs/promises");
-    await utimes(join(logs, "automation-2026-01-01.jsonl"), old, old);
+    await utimes(join(logs, "diagnostics-2026-01-01.jsonl"), old, old);
     await utimes(join(evidence, traceId), old, old);
 
-    await enforceAutomationDiagnosticRetention({
+    await enforceDiagnosticRetention({
       logDirectory: logs,
       evidenceDirectory: evidence,
       now: () => new Date("2026-09-15T00:00:00.000Z").getTime(),
@@ -213,7 +227,7 @@ describe("automation diagnostic retention", () => {
 
     await expect(stat(join(logs, "keep.txt"))).resolves.toBeDefined();
     await expect(
-      stat(join(logs, "automation-2026-01-01.jsonl")),
+      stat(join(logs, "diagnostics-2026-01-01.jsonl")),
     ).rejects.toThrow();
     await expect(stat(join(evidence, traceId))).rejects.toThrow();
   });

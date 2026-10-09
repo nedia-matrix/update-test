@@ -23,11 +23,13 @@ export type PublicationSnapshot = DomainPublicationSnapshot;
 export interface PublicationSummary {
   id: string;
   requestId: string;
+  sourcePublicationId?: string;
   platformId: string;
   accountId: string;
   contentForm: PublishContentForm;
   title: string | null;
   body: string;
+  tags?: readonly string[];
   assets: readonly { name: string; size: number }[];
   state: PublicationStatus;
   transitions: readonly {
@@ -43,6 +45,112 @@ export interface PublicationSummary {
   lastMessage: string | null;
   platformContentId: string | null;
   platformContentUrl: string | null;
+}
+
+export type PublicationDisplayGroup =
+  | "action_required"
+  | "in_progress"
+  | "attention_required"
+  | "completed"
+  | "closed";
+
+export function publicationDisplayGroup(
+  state: PublicationStatus,
+): PublicationDisplayGroup {
+  switch (state) {
+    case "awaiting_confirmation":
+      return "action_required";
+    case "draft":
+    case "validated":
+    case "scheduled":
+    case "preparing":
+    case "submitting":
+    case "verifying":
+    case "retrying":
+      return "in_progress";
+    case "uncertain":
+    case "failed":
+      return "attention_required";
+    case "published":
+      return "completed";
+    case "rejected":
+    case "cancelled":
+      return "closed";
+  }
+}
+
+export const publicationAttentionResolutions = [
+  "acknowledged_failure",
+  "recreated",
+  "confirmed_published",
+  "confirmed_not_published",
+  "dismissed",
+] as const;
+
+export type PublicationAttentionResolution =
+  (typeof publicationAttentionResolutions)[number];
+
+export interface PublicationAttentionRecord {
+  publicationId: string;
+  resolution: PublicationAttentionResolution;
+  resolvedAt: string;
+  manualPlatformContentId?: string | null;
+}
+
+export interface PublicationAttentionEvent extends PublicationAttentionRecord {
+  reopened: boolean;
+}
+
+export interface PublicationAttentionRepository {
+  get(publicationId: string): PublicationAttentionRecord | undefined;
+  set(record: PublicationAttentionRecord): void;
+  remove(publicationId: string): void;
+  history?(publicationId: string): readonly PublicationAttentionEvent[];
+}
+
+export interface PublicationTaskSummary extends PublicationSummary {
+  displayGroup: PublicationDisplayGroup;
+  effectiveDisplayGroup: PublicationDisplayGroup;
+  attentionResolution: PublicationAttentionResolution | null;
+  attentionResolvedAt: string | null;
+  manualPlatformContentId: string | null;
+  selectedPlatformContentId?: string | null;
+  attentionHistory: readonly PublicationAttentionEvent[];
+  archiveRemovable: boolean;
+}
+
+export interface PublicationQuery {
+  view: "pending" | "all";
+  platformId?: string;
+  accountId?: string;
+  group?: PublicationDisplayGroup;
+  state?: PublicationStatus;
+  keyword?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface PublicationTaskCounts {
+  actionRequired: number;
+  openAttentionRequired: number;
+  inProgress: number;
+  completed: number;
+  completedAutomatic: number;
+  completedManual: number;
+  attentionRequired: number;
+  closed: number;
+  all: number;
+  pending: number;
+}
+
+export interface PublicationQueryResult {
+  items: PublicationTaskSummary[];
+  counts: PublicationTaskCounts;
+  tabCounts: PublicationTaskCounts;
+  total: number;
+  nextCursor: string | null;
 }
 
 export interface OpenPublicationRequest {
@@ -65,12 +173,25 @@ export type SelectPublishMediaResult =
 export interface PreparePublishDraftRequest {
   accountId: string;
   requestId?: string;
+  sourcePublicationId?: string;
   contentForm: PublishContentForm;
   mediaSelectionId: string;
   title: string;
   body: string;
   tags?: readonly string[];
   submissionMode?: SubmissionMode;
+}
+
+export interface RecreatedPublicationDraft {
+  sourcePublicationId: string;
+  accountId: string;
+  contentForm: PublicationContentForm;
+  title: string;
+  body: string;
+  tags: readonly string[];
+  mediaSelectionId: string | null;
+  reusableAssets: readonly { name: string; size: number }[];
+  unavailableAssets: readonly string[];
 }
 
 export type PreparePublishDraftResult =
@@ -98,6 +219,7 @@ export type PreparePublishDraftResult =
   | { status: "account_unknown"; reason: string }
   | {
       status: "failed";
+      publicationId?: string;
       code: string;
       message: string;
       evidenceId: string | null;
@@ -131,11 +253,15 @@ export function toPublicationSummary(
   return {
     id: publication.id,
     requestId: record.requestId,
+    ...(record.sourcePublicationId
+      ? { sourcePublicationId: record.sourcePublicationId }
+      : {}),
     platformId: publication.platformId,
     accountId: publication.accountId,
     contentForm: record.contentForm,
     title: contentRevision.title ?? null,
     body: contentRevision.body,
+    tags: [...record.tags],
     assets: record.assets.map(({ name, size }) => ({ name, size })),
     state: publication.state,
     transitions: publication.transitions.map((transition) => ({
@@ -161,6 +287,7 @@ export interface PublicationRepository {
 
 export interface StartPublicationInput {
   requestId: string;
+  sourcePublicationId?: string;
   platformId: string;
   accountId: string;
   contentForm: PublicationContentForm;
@@ -229,6 +356,9 @@ export class PublishingService {
     }));
     const record = Publication.start({
       requestId: input.requestId,
+      ...(input.sourcePublicationId
+        ? { sourcePublicationId: input.sourcePublicationId }
+        : {}),
       publicationId,
       contentRevisionId,
       platformId: input.platformId,
@@ -380,6 +510,7 @@ export {
   type PublicationBrowserPort,
   type PublicationNoticePort,
   type PublicationStatePort,
+  type PublicationQueryPort,
   type PublishDiagnosticSink,
   type PublishAutomationDiagnosticEvent,
   type PublishAutomationDiagnosticPort,
