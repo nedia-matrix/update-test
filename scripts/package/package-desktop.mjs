@@ -26,10 +26,7 @@ const pluginBuildEnvironment = platformPluginBuildEnvironment(
 if (pluginBuildEnvironment) {
   const pluginBuild = spawnSync(
     process.execPath,
-    [
-      join(import.meta.dirname, "build-platform-plugins.mjs"),
-      "--local-package",
-    ],
+    [join(import.meta.dirname, "build-platform-plugins.mjs")],
     { env: pluginBuildEnvironment, stdio: "inherit" },
   );
   if (pluginBuild.error) throw pluginBuild.error;

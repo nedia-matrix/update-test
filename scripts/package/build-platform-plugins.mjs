@@ -29,16 +29,8 @@ const { build, transformWithEsbuild } = await import(
 const development = process.argv.includes("--development");
 // Resolve build tooling from the desktop workspace, just like Vite.
 const obfuscator = development ? undefined : require("javascript-obfuscator");
-const localPackage = process.argv.includes("--local-package");
 const legacyXiaohongshu = process.argv.includes("--legacy-xiaohongshu");
 const pluginSourceRoot = legacyXiaohongshu ? "plugins-legacy" : "plugins";
-if (
-  localPackage &&
-  (development ||
-    (process.env.CI && !["false", "0"].includes(process.env.CI)) ||
-    process.env.NEDIA_REQUIRE_UPDATE_KEYS === "1")
-)
-  throw new Error("本地打包选项不能用于开发信任或 CI/正式发行构建");
 const output = resolve(
   process.env.NEDIA_PLUGIN_OUTPUT ||
     (legacyXiaohongshu
@@ -82,15 +74,6 @@ const filesIn = (dir, prefix = "") =>
     item.isDirectory()
       ? filesIn(dir, prefix + item.name + "/")
       : [prefix + item.name],
-  );
-if (
-  !development &&
-  !legacyXiaohongshu &&
-  !localPackage &&
-  process.env.NEDIA_XHS_ASSET_DISTRIBUTION_APPROVED !== "1"
-)
-  throw new Error(
-    "公开分发前必须确认小红书签名资产来源版本与分发条件；详见 docs/references/platforms/xiaohongshu/SOURCES.txt",
   );
 // Validate signing prerequisites before compiling. Local packages use the same official trust as release packages.
 if (!development && Object.hasOwn(configuredPublicKeys(), "development-only"))
