@@ -1,3 +1,4 @@
+import { isPlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 import type {
   PlatformBrowserPolicy,
   PlatformDataClient,
@@ -176,7 +177,7 @@ export function createPlaywrightPlatformDataClient(
     // Revocation must propagate instead of being saved as a partial sync.
     controller.signal.throwIfAborted();
     interaction.check();
-    if (error instanceof PlatformDataOperationError) throw error;
+    if (isPlatformDataOperationError(error)) throw error;
     throw new PlatformDataOperationError(code, `platform_${code}`, {
       cause: error,
     });

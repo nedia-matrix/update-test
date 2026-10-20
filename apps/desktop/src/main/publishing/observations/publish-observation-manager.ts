@@ -11,6 +11,10 @@ import type {
 } from "@nedia-matrix/platform-sdk";
 
 export class PublishObservationManager {
+  private readonly directExecutions = new Map<
+    string,
+    { interrupt(): Promise<void> }
+  >();
   private readonly observations = new Map<string, ManagedPublishObservation>();
 
   constructor(
@@ -25,6 +29,8 @@ export class PublishObservationManager {
     diagnostics?: PublishAutomationDiagnosticTrace;
     onFinished?: (result?: PublishResultEvent) => void | Promise<void>;
   }): ManagedPublishObservation {
+    if (this.directExecutions.has(input.accountId))
+      throw new Error("Account already has an active API execution");
     void this.stop(input.accountId);
     const id = randomUUID();
     let stopped = false;
@@ -177,17 +183,79 @@ export class PublishObservationManager {
   }
 
   hasActive(): boolean {
-    return this.observations.size > 0;
+    return this.observations.size > 0 || this.directExecutions.size > 0;
+  }
+
+  attachDirect(input: {
+    publicationId: string;
+    accountId: string;
+    platformId: string;
+    onInterrupt(): void;
+  }) {
+    if (
+      this.directExecutions.has(input.accountId) ||
+      this.observations.has(input.accountId)
+    )
+      throw new Error("Account already has an active publication execution");
+    const id = randomUUID();
+    let sequence = 0;
+    let closed = false;
+    let tail = Promise.resolve();
+    let finish!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let interrupted = false;
+    const hosted = {
+      interrupt: async () => {
+        if (!interrupted) {
+          interrupted = true;
+          input.onInterrupt();
+        }
+        await completed;
+      },
+    };
+    this.directExecutions.set(input.accountId, hosted);
+    return {
+      id,
+      persist: (result: PublishResultEvent) => {
+        if (closed) return Promise.reject(new Error("API execution closed"));
+        const event = {
+          eventId: randomUUID(),
+          observationId: id,
+          publicationId: input.publicationId,
+          accountId: input.accountId,
+          platformId: input.platformId,
+          sequence: ++sequence,
+          result,
+        };
+        tail = tail.then(() => this.onEvent(event));
+        return tail;
+      },
+      close: async () => {
+        closed = true;
+        try {
+          await tail;
+        } finally {
+          if (this.directExecutions.get(input.accountId) === hosted)
+            this.directExecutions.delete(input.accountId);
+          finish();
+        }
+      },
+    };
   }
 
   async stop(accountId: string): Promise<void> {
-    await this.observations.get(accountId)?.interrupt();
+    const direct = this.directExecutions.get(accountId);
+    const observation = this.observations.get(accountId);
+    if (direct) await direct.interrupt();
+    await observation?.interrupt();
   }
 
   async stopAll(): Promise<void> {
     await Promise.all(
-      [...this.observations.values()].map((observation) =>
-        observation.interrupt("desktop_shutdown"),
+      [...this.observations.values(), ...this.directExecutions.values()].map(
+        (observation) => observation.interrupt("desktop_shutdown"),
       ),
     );
   }

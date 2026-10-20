@@ -1,5 +1,6 @@
 import { ipcChannels } from "../../../bridge/channels.js";
 import type {
+  LocalMediaResource,
   PublicationAttentionResolution,
   PublicationQuery,
   SelectPublishMediaRequest,
@@ -16,10 +17,14 @@ type PublishIpcApplication = Pick<
 
 interface PublishIpcDependencies {
   application: PublishIpcApplication;
+  archiveLocalMedia: (
+    resources: readonly LocalMediaResource[],
+  ) => Promise<LocalMediaResource[]>;
 }
 
 export function registerPublicationIpcHandlers({
   application,
+  archiveLocalMedia,
 }: PublishIpcDependencies): void {
   ipcMain.handle(
     ipcChannels.queryPublications,
@@ -177,7 +182,9 @@ export function registerPublicationIpcHandlers({
       if (result.canceled || result.filePaths.length === 0) {
         return { status: "cancelled" } as const;
       }
-      const resources = await readLocalMediaResources(result.filePaths);
+      const resources = await archiveLocalMedia(
+        await readLocalMediaResources(result.filePaths),
+      );
       return application.publications.registerLocalMedia({
         ...request,
         resources,

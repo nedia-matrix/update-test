@@ -8,6 +8,9 @@ const extensionsByMediaType: Readonly<Record<string, string>> = {
   "image/png": "png",
   "image/webp": "webp",
   "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/x-m4v": "m4v",
+  "video/webm": "webm",
 };
 
 export interface CommittedPublicationAsset {

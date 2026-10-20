@@ -81,6 +81,16 @@ button:disabled {
   border-color: var(--border-strong);
   background: var(--surface-hover);
 }
+.primary-outline-button {
+  border-color: var(--accent);
+  background: transparent;
+  color: var(--accent);
+}
+.primary-outline-button:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
 .compact-button {
   min-height: 32px;
   padding-inline: 11px;

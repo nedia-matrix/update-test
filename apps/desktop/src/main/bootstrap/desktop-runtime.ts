@@ -1,3 +1,16 @@
+import { resolvePlatformSettings } from "@nedia-matrix/platform-sdk";
+import { desktopPlugins } from "../plugins/desktop-plugins.js";
+import { createPlatformExecutionHost } from "../plugins/execution-host.js";
+import { createPluginPublisher } from "../plugins/plugin-publisher.js";
+import { AccountBrowserSwitchService } from "../accounts/application/account-browser-switch-service.js";
+import { registerAccountBrowserSwitchIpc } from "../accounts/ipc/register-account-browser-switch-ipc.js";
+import { publicUpdateFetch } from "../updates/public-update-fetch.js";
+import { join } from "node:path";
+import { FingerprintBrowserService } from "../browser/fingerprint-browser-service.js";
+import { registerFingerprintBrowserIpc } from "../browser/register-fingerprint-browser-ipc.js";
+import { fingerprintBrowserVersion } from "@nedia-matrix/automation-playwright";
+import { desktopPreferences } from "../preferences/desktop-preferences.js";
+import { DesktopBrowserPolicy } from "../accounts/infrastructure/desktop-browser-policy.js";
 import { randomUUID } from "node:crypto";
 import { release as operatingSystemRelease } from "node:os";
 import path from "node:path";
@@ -31,6 +44,8 @@ import { runtimeSupportedTargets } from "../runtime-api/mapping/runtime-supporte
 import { ContentAddressedPublicationAssetStore } from "../publishing/infrastructure/content-addressed-asset-store.js";
 import { MediaSelectionStore } from "../publishing/infrastructure/media-selection-store.js";
 import { RemoteAssetDownloader } from "../publishing/infrastructure/remote-asset-downloader.js";
+import { LocalAssetArchiver } from "../publishing/infrastructure/local-asset-archiver.js";
+import { registerPublicationAssetIpc } from "../publishing/ipc/register-publication-asset-ipc.js";
 import { registerPublicationIpcHandlers } from "../publishing/ipc/register-publication-ipc-handlers.js";
 import { registerPlatformContentIpcHandlers } from "../platform-content/ipc/register-platform-content-ipc-handlers.js";
 import { PublicationObservationQueue } from "../publishing/observations/publication-observation-queue.js";
@@ -114,6 +129,8 @@ export class DesktopRuntime {
   private readonly publicationObservations: PublicationObservationQueue;
   private readonly publishObservations: PublishObservationManager;
   private readonly browserSessions: PlaywrightBrowserSessionHost;
+  private accountBrowserSwitch: AccountBrowserSwitchService | undefined;
+  private readonly fingerprintBrowser: FingerprintBrowserService;
   private readonly diagnostics: DesktopDiagnosticTraceService;
   private readonly startupTrace: ReturnType<
     DesktopDiagnosticTraceService["start"]
@@ -340,11 +357,16 @@ export class DesktopRuntime {
       return this.publicationObservations.accept(event);
     });
     this.browserSessions = new PlaywrightBrowserSessionHost(
-      (accountId) => {
-        cleanupClosedBrowserSession(accountId, {
-          mediaSelections: this.mediaSelections,
-          publishObservations: this.publishObservations,
-        });
+      (accountId, profileId) => {
+        cleanupClosedBrowserSession(
+          accountId,
+          {
+            accountStore: this.accountStore,
+            mediaSelections: this.mediaSelections,
+            publishObservations: this.publishObservations,
+          },
+          profileId,
+        );
       },
       undefined,
       () => {
@@ -355,7 +377,51 @@ export class DesktopRuntime {
             "请在原发布页完成提交。新标签页中的提交不属于当前任务的结果观察范围；如已在新标签页提交，请先核实平台结果，不要重复发布。",
         });
       },
+      (runtimes) => this.mainWindow.sendAccountBrowserRuntimesChanged(runtimes),
+      ({ base, context, account, platform, assertOwnership }) => {
+        const plugin = desktopPlugins().execution(platform.id);
+        if (!plugin?.execution?.openDataClient)
+          return { dataClient: base, close: async () => base.dispose() };
+        if (account.platformId !== platform.id)
+          throw new Error("平台账号绑定无效");
+        return plugin.execution.openDataClient({
+          settings: resolvePlatformSettings(platform, account.settings),
+          base,
+          account: {
+            platformId: account.platformId,
+            identityScheme: account.identityScheme,
+            externalAccountId: account.externalAccountId,
+          },
+          host: createPlatformExecutionHost({
+            context,
+            assetDirectory: join(plugin.directory, "assets"),
+            assertOwnership,
+          }),
+        });
+      },
     );
+    const fingerprintRoot = join(
+      app.getPath("userData"),
+      "browsers",
+      fingerprintBrowserVersion,
+    );
+    this.fingerprintBrowser = new FingerprintBrowserService(
+      fingerprintRoot,
+      () => this.browserSessions.acquireBrowserMaintenance(fingerprintRoot),
+      {
+        fetch: publicUpdateFetch,
+        enableForNewAccounts: () => {
+          const preferences = desktopPreferences();
+          if (preferences.get().browser.defaultProvider !== "fingerprint") {
+            preferences.update({ browser: { defaultProvider: "fingerprint" } });
+          }
+        },
+      },
+    );
+  }
+
+  assertFingerprintBrowserReady(): Promise<void> {
+    return this.fingerprintBrowser.assertReady();
   }
 
   get canQuit(): boolean {
@@ -615,11 +681,17 @@ export class DesktopRuntime {
         },
       },
       accountPublications: this.accountPublications,
+      createProfileId: (platformId: string, accountId: string) =>
+        new DesktopBrowserPolicy(
+          app.getPath("userData"),
+          desktopPreferences(),
+        ).createProfileId(platformId, accountId),
       accountStore: this.accountStore,
       platformContents: this.metadata.platformContents,
       browserSessions: this.browserSessions,
       mediaSelections: this.mediaSelections,
       publishObservations: this.publishObservations,
+      pluginPublishing: createPluginPublisher(this.browserSessions),
       publishing: this.publishing,
       publicationArchive: this.metadata.publications,
       publicationSelection: this.metadata.publications,
@@ -713,13 +785,53 @@ export class DesktopRuntime {
     this.publicationObservations.replayPersisted();
     this.startupStage = "recover_interrupted_publications";
     this.application.publications.recoverInterrupted();
+    this.startupStage = "recover_interrupted_browser_switches";
+    this.metadata.accountBrowserSwitches.recoverInterrupted(
+      new Date().toISOString(),
+    );
+    this.accountBrowserSwitch = new AccountBrowserSwitchService({
+      accounts: this.accountStore,
+      operations: this.metadata.accountBrowserSwitches,
+      platforms: desktopPlatformCatalog,
+      policy: new DesktopBrowserPolicy(
+        app.getPath("userData"),
+        desktopPreferences(),
+      ),
+      browser: this.browserSessions,
+      acquireAccount: (accountId) =>
+        this.application!.acquireAccountBrowserSwitch(accountId),
+      assertFingerprintReady: () => this.fingerprintBrowser.assertReady(),
+      cleanup: () => {
+        this.metadata.accountBrowserSwitches.pruneTerminal(
+          new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString(),
+        );
+        return this.application!.accounts.cleanupRetiredProfiles();
+      },
+      diagnostics: this.diagnostics,
+      onChanged: () => {
+        this.mainWindow.sendAccountsChanged();
+        this.localRuntimeServer?.publishAccountsChanged();
+      },
+    });
     this.startupStage = "register_services";
+    registerAccountBrowserSwitchIpc(this.accountBrowserSwitch);
     void this.application.accounts.cleanupRetiredProfiles().catch(() => {
       console.error("Failed to clean up retired browser profiles");
     });
-    registerAccountIpcHandlers(this.application);
+    registerAccountIpcHandlers(this.application, this.browserSessions);
     registerPlatformContentIpcHandlers(this.application);
+    registerPublicationAssetIpc({
+      getAssets: (publicationId) =>
+        this.metadata.publications.get(publicationId)?.assets,
+      resolvePath: (relativePath) =>
+        publicationAssetStore.resolvePath(relativePath),
+    });
+    const localAssets = new LocalAssetArchiver(
+      publicationAssetStore,
+      path.join(app.getPath("userData"), "staging"),
+    );
     registerPublicationIpcHandlers({
+      archiveLocalMedia: (resources) => localAssets.archive(resources),
       ...dependencies,
       application: this.application,
     });
@@ -750,6 +862,8 @@ export class DesktopRuntime {
         try {
           await completeUpdateExit(prepared, {
             cleanup: async () => {
+              await this.accountBrowserSwitch?.stop();
+              await this.fingerprintBrowser.stop();
               await this.localRuntimeServer?.stop();
               await this.publishObservations.stopAll();
               this.publicationObservations.retryPending();
@@ -776,8 +890,28 @@ export class DesktopRuntime {
         }
       },
     });
+    registerFingerprintBrowserIpc(this.fingerprintBrowser);
+    void this.fingerprintBrowser.initialize();
     registerApplicationUpdateIpcHandler(this.application);
     registerDiagnosticIpc({
+      getTechnicalInformation: async () => {
+        const browser = await this.fingerprintBrowser.getStatus();
+        const database = this.metadata.database.connection;
+        return {
+          applicationVersion: app.getVersion(),
+          databaseSchemaVersion: Number(
+            database.prepare("PRAGMA user_version").get()?.user_version,
+          ),
+          sqliteVersion: String(
+            database.prepare("SELECT sqlite_version() AS version").get()
+              ?.version,
+          ),
+          browserVersion: browser.version,
+          browserAvailable: browser.available,
+          operatingSystem: `${process.platform} ${operatingSystemRelease()}`,
+          architecture: process.arch,
+        };
+      },
       logDirectory: path.join(app.getPath("userData"), "diagnostics"),
       evidenceDirectories: [
         path.join(app.getPath("userData"), "diagnostics", "evidence"),
@@ -869,26 +1003,38 @@ export class DesktopRuntime {
       requestId: randomUUID(),
     });
     this.publicationObservations.retryPending();
+    const switchCleanup =
+      this.accountBrowserSwitch?.stop() ?? Promise.resolve();
+    const fingerprintCleanup = Promise.all([
+      switchCleanup,
+      this.fingerprintBrowser.stop(),
+    ]);
     const shutdown = Promise.all([
-      (this.application?.stopCommands() ?? Promise.resolve()).then(() =>
-        shutdownDesktopRuntime({
-          browserSessions: this.browserSessions,
-          mediaSelections: this.mediaSelections,
-          publishObservations: this.publishObservations,
-          diagnostics: this.diagnostics,
-          report: (event, details) =>
-            shutdownTrace.report({
-              component: "application",
-              event,
-              ...(details ? { details } : {}),
-            }),
-          finishDiagnostics: (result) => shutdownTrace.finish(result),
-        }),
-      ),
+      switchCleanup
+        .then(() => this.application?.stopCommands())
+        .then(() =>
+          shutdownDesktopRuntime({
+            browserSessions: this.browserSessions,
+            mediaSelections: this.mediaSelections,
+            publishObservations: this.publishObservations,
+            diagnostics: this.diagnostics,
+            report: (event, details) =>
+              shutdownTrace.report({
+                component: "application",
+                event,
+                ...(details ? { details } : {}),
+              }),
+            finishDiagnostics: (result) => shutdownTrace.finish(result),
+          }),
+        ),
       this.localRuntimeServer?.stop(),
     ]).then(() => undefined);
 
-    void waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS)
+    void shutdown.catch(() => undefined);
+    // Installer cleanup has its own network/process timeouts. Do not force exit
+    // before a mounted volume or probe process has been released.
+    void fingerprintCleanup
+      .then(() => waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS))
       .then((result) => {
         if (result === "timed-out") {
           console.warn(

@@ -1,3 +1,7 @@
+import {
+  resolveAccountPlatform,
+  type AccountPlatformCatalog,
+} from "@nedia-matrix/platform-sdk";
 import type {
   PlatformContentData,
   PlatformDataClient,
@@ -42,6 +46,7 @@ export interface PlatformContentRepository {
 }
 
 export interface PlatformContentAccount {
+  readonly settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
   readonly id: string;
   readonly platformId: string;
   readonly lifecycle: "pending_identity" | "active";
@@ -59,9 +64,7 @@ export interface PlatformContentServiceDependencies {
       observedAt: string,
     ): void;
   };
-  platforms: {
-    require(platformId: string): PlatformModule;
-  };
+  platforms: AccountPlatformCatalog;
   browser: {
     open(
       accountId: string,
@@ -200,7 +203,10 @@ export class PlatformContentService {
       ) {
         throw new Error("请先完成平台账号登录识别");
       }
-      const platform = this.dependencies.platforms.require(account.platformId);
+      const platform = resolveAccountPlatform(
+        this.dependencies.platforms,
+        account,
+      );
       if (!platform.content) throw new Error("该平台暂不支持作品同步");
       const opened = await this.dependencies.browser.open(
         accountId,

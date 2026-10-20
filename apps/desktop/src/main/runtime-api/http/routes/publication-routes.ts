@@ -54,6 +54,23 @@ export class RuntimePublicationRoutes {
         tags: input.tags,
         assets: input.assets,
       });
+      if (result.status === "cancelled") {
+        writeJson(response, 200, {
+          requestId: input.requestId,
+          state: "cancelled",
+          result: {
+            platform: input.platform,
+            contentForm:
+              input.contentForm === "imageText" ? "image_text" : "video",
+            state: "cancelled",
+            ok: false,
+            error: result.message,
+            errorCode: "publish_cancelled",
+            retryable: true,
+          },
+        });
+        return;
+      }
       if (result.status === "login_required") {
         writeJson(response, 409, {
           code: "NOT_LOGGED_IN",

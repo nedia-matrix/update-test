@@ -1,6 +1,6 @@
 import { defineConfig } from "electron-vite";
 import { createPublicKey } from "node:crypto";
-import { configuredPublicKeys } from "../../scripts/update-keys.mjs";
+import { configuredPublicKeys } from "../../scripts/publish/update-keys.mjs";
 const updateKeys = configuredPublicKeys();
 if (
   process.env.NEDIA_REQUIRE_UPDATE_KEYS === "1" &&
@@ -17,6 +17,8 @@ if (
     "NEDIA_UPDATE_PUBLIC_KEYS must be a JSON object of key IDs and PEM public keys",
   );
 }
+if (Object.hasOwn(updateKeys, "development-only"))
+  throw new Error("发行信任配置不能包含插件开发密钥");
 for (const [id, pem] of Object.entries(updateKeys)) {
   if (
     !/^[A-Za-z0-9._-]{1,64}$/.test(id) ||

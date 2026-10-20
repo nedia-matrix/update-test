@@ -4,37 +4,50 @@ import type {
 } from "@nedia-matrix/account-management";
 import type { PlatformContentSnapshot } from "@nedia-matrix/platform-content";
 import type { PlatformLoginEntrySummary } from "../../../bridge/contracts.js";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 
 import type { AppContext } from "../app-context.js";
 import { Icon } from "../components/icons.js";
+import { AccountPluginSettings } from "../components/account-plugin-settings.js";
+import { AccountBrowserSettings } from "../components/account-browser-settings.js";
 import { PlatformIcon } from "../components/platform-icon.js";
 import {
   accountStatus,
   errorMessage,
   formatTime,
   platformFor,
+  isPlatformAvailable,
 } from "../shared.js";
 import { PlatformContentsPage } from "./platform-contents-page.js";
+
+import {
+  AccountBrowserStatus,
+  browserRuntimeLabel,
+  type BrowserRuntimeStatus,
+} from "../components/account-browser-status.js";
 
 export function AccountsPage({
   context,
   account,
+  browserStatus = "unknown",
   onAccountsChanged,
 }: {
   context: AppContext;
   account?: PlatformAccountView;
+  browserStatus?: BrowserRuntimeStatus;
   onAccountsChanged(
     accounts: readonly PlatformAccountView[],
     preferredAccountId?: string,
   ): void;
 }) {
-  const [activeTab, setActiveTab] = useState<"overview" | "contents">(
-    "overview",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "contents" | "settings"
+  >("overview");
   const [busyAction, setBusyAction] = useState<
     "open" | "refresh" | "contents" | "delete"
   >();
+  const [browserSwitchBusy, setBrowserSwitchBusy] = useState(false);
+  const [submissionBusy, setSettingsBusy] = useState(false);
   const [contentRefreshToken, setContentRefreshToken] = useState(0);
 
   useEffect(() => setActiveTab("overview"), [account?.id]);
@@ -74,12 +87,17 @@ export function AccountsPage({
         context.setStatus("账号资料已更新");
         return;
       }
-      if (!globalThis.confirm(`删除“${accountName}”及其本地登录数据？`)) return;
-      context.setStatus("正在删除账号和本地 Session…", "busy");
+      if (
+        !globalThis.confirm(
+          `从本应用移除“${accountName}”及其本地登录数据？此操作不会注销平台账号。`,
+        )
+      )
+        return;
+      context.setStatus("正在移除账号和本地登录数据…", "busy");
       await window.matrix.removePlatformAccount({ accountId: account.id });
       const refreshed = await context.refreshAccounts();
       onAccountsChanged(refreshed);
-      context.setStatus("账号和本地 Session 已删除");
+      context.setStatus("账号和本地登录数据已移除");
     } catch (error) {
       context.setStatus(errorMessage(error, "账号操作失败"), "error");
     } finally {
@@ -114,6 +132,12 @@ export function AccountsPage({
 
   return (
     <div class="account-workspace">
+      {platform?.unavailableReason && (
+        <p class="runtime-settings-error" role="status">
+          {platform.unavailableReason}
+          。账号和历史已保留，请在设置中管理平台插件。
+        </p>
+      )}
       <header class="workspace-header account-profile-header">
         <AccountAvatar account={account} accountName={accountName} large />
         <div class="workspace-header-copy account-profile-copy">
@@ -137,16 +161,27 @@ export function AccountsPage({
           <button
             class="secondary-button compact-button"
             type="button"
-            disabled={busyAction !== undefined}
+            title={browserRuntimeLabel(browserStatus)}
+            disabled={
+              busyAction !== undefined ||
+              browserSwitchBusy ||
+              submissionBusy ||
+              Boolean(platform?.unavailableReason)
+            }
             onClick={() => void runAction("open")}
           >
-            <Icon name="arrow-up-right" size={16} />
+            <AccountBrowserStatus status={browserStatus} compact />
             打开平台
           </button>
           <button
             class="secondary-button compact-button"
             type="button"
-            disabled={busyAction !== undefined}
+            disabled={
+              busyAction !== undefined ||
+              browserSwitchBusy ||
+              submissionBusy ||
+              Boolean(platform?.unavailableReason)
+            }
             onClick={() => void runAction("refresh")}
           >
             <Icon name="refresh" size={16} />
@@ -156,18 +191,17 @@ export function AccountsPage({
             class="secondary-button compact-button"
             type="button"
             disabled={
-              busyAction !== undefined || account.status !== "authenticated"
+              busyAction !== undefined ||
+              browserSwitchBusy ||
+              submissionBusy ||
+              Boolean(platform?.unavailableReason) ||
+              account.status !== "authenticated"
             }
             onClick={() => void synchronizeContents()}
           >
             <Icon name="content" size={16} />
             {busyAction === "contents" ? "同步中" : "同步作品"}
           </button>
-          <AccountActionMenu
-            account={account}
-            disabled={busyAction !== undefined}
-            onDelete={() => void runAction("delete")}
-          />
         </div>
       </header>
 
@@ -188,15 +222,64 @@ export function AccountsPage({
         >
           平台内容
         </button>
+        <button
+          class={activeTab === "settings" ? "active" : undefined}
+          type="button"
+          aria-current={activeTab === "settings" ? "page" : undefined}
+          onClick={() => setActiveTab("settings")}
+        >
+          设置{browserSwitchBusy ? " · 处理中" : ""}
+        </button>
       </nav>
 
-      {activeTab === "overview" ? (
+      {/* Keep the controller mounted so switching tabs preserves switch progress. */}
+      <div class="account-settings" hidden={activeTab !== "settings"}>
+        <AccountPluginSettings
+          account={account}
+          context={context}
+          disabled={busyAction !== undefined || browserSwitchBusy}
+          onBusy={setSettingsBusy}
+          onUpdated={async (accountId) => {
+            const refreshed = await context.refreshAccounts();
+            onAccountsChanged(refreshed, accountId);
+          }}
+        />
+        <AccountBrowserSettings
+          disabled={submissionBusy || Boolean(platform?.unavailableReason)}
+          accountId={account.id}
+          profileId={account.profileId}
+          onBusy={setBrowserSwitchBusy}
+        />
+        <section
+          class="settings-surface account-removal-settings"
+          aria-label="移除账号"
+        >
+          <div class="account-settings-copy">
+            <h2>移除账号</h2>
+            <p>从本应用移除该账号及其本地登录数据，不会注销平台账号。</p>
+          </div>
+          <button
+            class="secondary-button small-button account-remove-button"
+            type="button"
+            disabled={
+              busyAction !== undefined || browserSwitchBusy || submissionBusy
+            }
+            onClick={() => void runAction("delete")}
+          >
+            <Icon name="delete" size={16} />
+            {busyAction === "delete" ? "移除中…" : "移除账号"}
+          </button>
+        </section>
+      </div>
+
+      {activeTab === "overview" && (
         <AccountOverview
           account={account}
           context={context}
           refreshToken={contentRefreshToken}
         />
-      ) : (
+      )}
+      {activeTab === "contents" && (
         <PlatformContentsPage
           context={context}
           fixedAccountId={account.id}
@@ -282,7 +365,7 @@ export function AddAccountDialog({
                   }
                 >
                   <PlatformIcon
-                    platformId={platform.id}
+                    iconUrl={platform.iconUrl}
                     platformName={platform.displayName}
                   />
                   <span>
@@ -339,7 +422,11 @@ function AccountOverview({
   }, [account.id, context, refreshToken]);
 
   const openContent = async (content: PlatformContentSnapshot) => {
-    if (!content.contentUrl) return;
+    if (
+      !content.contentUrl ||
+      !isPlatformAvailable(context.platforms, content.platformId)
+    )
+      return;
     try {
       await window.matrix.openPlatformContent({
         accountId: account.id,
@@ -387,12 +474,26 @@ function AccountOverview({
                 class="account-recent-card"
                 type="button"
                 key={content.id}
-                aria-disabled={!content.contentUrl}
-                tabIndex={content.contentUrl ? 0 : -1}
+                disabled={
+                  !content.contentUrl ||
+                  !isPlatformAvailable(context.platforms, content.platformId)
+                }
+                aria-disabled={
+                  !content.contentUrl ||
+                  !isPlatformAvailable(context.platforms, content.platformId)
+                }
+                tabIndex={
+                  content.contentUrl &&
+                  isPlatformAvailable(context.platforms, content.platformId)
+                    ? 0
+                    : -1
+                }
                 title={
-                  content.contentUrl
-                    ? "在浏览器中打开平台内容"
-                    : "该内容没有可用链接"
+                  !isPlatformAvailable(context.platforms, content.platformId)
+                    ? "平台插件不可用，无法打开作品"
+                    : content.contentUrl
+                      ? "在浏览器中打开平台内容"
+                      : "该内容没有可用链接"
                 }
                 onClick={() => void openContent(content)}
               >
@@ -468,61 +569,6 @@ function contentTypeLabel(
   type: PlatformContentSnapshot["contentType"],
 ): string {
   return type === "video" ? "视频" : type === "image_text" ? "图文" : "未知";
-}
-
-function AccountActionMenu({
-  account,
-  disabled,
-  onDelete,
-}: {
-  account: PlatformAccountView;
-  disabled: boolean;
-  onDelete(): void;
-}) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        !menuRef.current?.contains(event.target)
-      )
-        setOpen(false);
-    };
-    document.addEventListener("pointerdown", close, true);
-    return () => document.removeEventListener("pointerdown", close, true);
-  }, [open]);
-  return (
-    <div class="action-menu" ref={menuRef}>
-      <button
-        class={`icon-button action-menu-trigger${open ? " active" : ""}`}
-        type="button"
-        disabled={disabled}
-        aria-label={`更多 ${account.nickname ?? account.displayName} 操作`}
-        aria-expanded={open}
-        onClick={() => setOpen((visible) => !visible)}
-      >
-        <Icon name="more" />
-      </button>
-      {open && (
-        <div class="action-menu-popover" role="menu">
-          <button
-            class="danger-menu-item"
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onDelete();
-            }}
-          >
-            <Icon name="delete" size={15} />
-            删除账号
-          </button>
-        </div>
-      )}
-    </div>
-  );
 }
 
 export function AccountAvatar({

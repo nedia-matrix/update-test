@@ -213,7 +213,7 @@ export function ApplicationUpdateSettings() {
                   void run(() => window.matrix.installApplicationUpdate())
                 }
               >
-                {state.installAction === "exit" ? "退出并安装" : "重启并更新"}
+                {state.installAction === "exit" ? "退出并安装" : "更新并重启"}
               </button>
             )}
             {(state?.phase === "ready" ||
@@ -245,9 +245,7 @@ export function ApplicationUpdateSettings() {
             <label class="update-source-label" for="update-source-url">
               更新地址
             </label>
-            <p id="update-source-hint">
-              支持 GitHub 仓库或更新清单地址，仅接受已签名的正式更新。
-            </p>
+            <p id="update-source-hint">支持 GitHub 仓库或更新清单地址。</p>
           </div>
           <div class="update-source-controls">
             <input

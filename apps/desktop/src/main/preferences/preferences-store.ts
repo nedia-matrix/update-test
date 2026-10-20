@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 
 import {
   isThemePreference,
+  isBrowserProvider,
   type DesktopPreferences,
   type GetPreferencesRequest,
   type UpdatePreferencesRequest,
@@ -41,7 +42,8 @@ export class PreferencesStore {
     const preferences: DesktopPreferences = {
       schemaVersion: 1,
       appearance: { theme: request.legacyThemePreference ?? "system" },
-      updates: { sourceUrl: null },
+      updates: { sourceUrl: null, includePlugins: true },
+      browser: { defaultProvider: "system" },
     };
     this.write(preferences);
     return preferences;
@@ -50,17 +52,32 @@ export class PreferencesStore {
   update(request: UpdatePreferencesRequest): DesktopPreferences {
     if (
       !isObject(request) ||
-      (request.appearance === undefined && request.updates === undefined) ||
+      (request.appearance === undefined &&
+        request.updates === undefined &&
+        request.browser === undefined) ||
       (request.appearance !== undefined &&
         (!isObject(request.appearance) ||
           !isThemePreference(request.appearance.theme))) ||
-      (request.updates !== undefined && !isObject(request.updates))
+      (request.updates !== undefined &&
+        (!isObject(request.updates) ||
+          (request.updates.includePlugins !== undefined &&
+            typeof request.updates.includePlugins !== "boolean") ||
+          (request.updates.sourceUrl === undefined &&
+            request.updates.includePlugins === undefined))) ||
+      (request.browser !== undefined &&
+        (!isObject(request.browser) ||
+          (request.browser.defaultProvider === undefined &&
+            request.browser.onboardingDismissed === undefined) ||
+          (request.browser.defaultProvider !== undefined &&
+            !isBrowserProvider(request.browser.defaultProvider)) ||
+          (request.browser.onboardingDismissed !== undefined &&
+            typeof request.browser.onboardingDismissed !== "boolean")))
     ) {
       throw new TypeError("Invalid appearance preference");
     }
     const existing = this.read();
     const sourceUrl =
-      request.updates === undefined
+      request.updates?.sourceUrl === undefined
         ? (existing?.updates?.sourceUrl ?? null)
         : this.normalizeSource(request.updates.sourceUrl);
     const preferences: PreferencesDocument = {
@@ -74,7 +91,23 @@ export class PreferencesStore {
             ? this.view(existing).appearance.theme
             : "system",
       },
-      updates: { ...existing?.updates, sourceUrl },
+      updates: {
+        ...existing?.updates,
+        sourceUrl,
+        includePlugins:
+          typeof request.updates?.includePlugins === "boolean"
+            ? request.updates.includePlugins
+            : (existing?.updates?.includePlugins ?? true),
+      },
+      browser: {
+        ...existing?.browser,
+        ...(typeof request.browser?.onboardingDismissed === "boolean"
+          ? { onboardingDismissed: request.browser.onboardingDismissed }
+          : {}),
+        defaultProvider: isBrowserProvider(request.browser?.defaultProvider)
+          ? request.browser.defaultProvider
+          : (existing?.browser?.defaultProvider ?? "system"),
+      },
     };
     this.write(preferences);
     return this.view(preferences);
@@ -101,7 +134,20 @@ export class PreferencesStore {
       if (!isObject(value.updates))
         throw new TypeError("Invalid update preferences");
       this.normalizeSource(value.updates.sourceUrl);
+      if (
+        value.updates.includePlugins !== undefined &&
+        typeof value.updates.includePlugins !== "boolean"
+      )
+        throw new TypeError("Invalid plugin update preference");
     }
+    if (
+      value.browser !== undefined &&
+      (!isObject(value.browser) ||
+        !isBrowserProvider(value.browser.defaultProvider) ||
+        (value.browser.onboardingDismissed !== undefined &&
+          typeof value.browser.onboardingDismissed !== "boolean"))
+    )
+      throw new TypeError("Invalid browser preferences");
     return value as PreferencesDocument;
   }
 
@@ -109,8 +155,15 @@ export class PreferencesStore {
     return {
       schemaVersion: 1,
       appearance: { theme: document.appearance.theme },
+      browser: {
+        defaultProvider: document.browser?.defaultProvider ?? "system",
+        ...(document.browser?.onboardingDismissed !== undefined
+          ? { onboardingDismissed: document.browser.onboardingDismissed }
+          : {}),
+      },
       updates: {
         sourceUrl: this.normalizeSource(document.updates?.sourceUrl ?? null),
+        includePlugins: document.updates?.includePlugins ?? true,
       },
     };
   }

@@ -1,3 +1,7 @@
+import {
+  assertPlatformSettings,
+  type PlatformSettings,
+} from "@nedia-matrix/platform-sdk";
 import type {
   AccountReplacementAlias,
   PlatformAccountSnapshot,
@@ -189,6 +193,18 @@ export class PlatformAccount {
     this.updateFromDetection(detection, occurredAt, true);
   }
 
+  setSettings(settings: PlatformSettings, occurredAt: string): void {
+    assertPlatformSettings(settings);
+    assertTimestamp(occurredAt, "Settings change time");
+    const next = {
+      ...this.snapshot,
+      settings: { ...settings },
+      updatedAt: occurredAt,
+    };
+    assertPlatformAccountSnapshot(next);
+    this.snapshot = next;
+  }
+
   updateProfile(
     accountInfo: readonly PlatformAccountInfoItem[],
     occurredAt: string,
@@ -283,6 +299,46 @@ export class PlatformAccount {
     };
   }
 
+  switchBrowserProfile(input: {
+    expectedProfileId: string;
+    profileId: string;
+    identity: {
+      platformId: string;
+      identityScheme: string;
+      externalAccountId: string;
+    };
+    nickname: string;
+    avatarUrl: string | null;
+    occurredAt: string;
+  }): PlatformAccountSnapshot {
+    const identity = this.identity;
+    if (
+      !identity ||
+      identity.platformId !== input.identity.platformId ||
+      identity.identityScheme !== input.identity.identityScheme ||
+      identity.externalAccountId !== input.identity.externalAccountId ||
+      this.profileId !== input.expectedProfileId
+    )
+      throw new TypeError("Browser switch account or identity changed");
+    assertNonEmptyString(input.profileId, "Target profile ID");
+    if (input.profileId === this.profileId)
+      throw new TypeError("Browser switch requires a new profile");
+    assertNonEmptyString(input.nickname, "Account nickname");
+    const next = {
+      ...this.snapshot,
+      profileId: input.profileId,
+      displayName: input.nickname,
+      nickname: input.nickname,
+      avatarUrl: input.avatarUrl,
+      status: "authenticated" as const,
+      lastVerifiedAt: input.occurredAt,
+      updatedAt: input.occurredAt,
+    };
+    assertPlatformAccountSnapshot(next);
+    this.snapshot = next;
+    return this.toSnapshot();
+  }
+
   private updateFromDetection(
     detection: PlatformAccountDetection,
     occurredAt: string,
@@ -358,6 +414,8 @@ function assertSnapshotShape(snapshot: PlatformAccountSnapshot): void {
   assertNonEmptyString(snapshot.id, "Account ID");
   assertNonEmptyString(snapshot.platformId, "Account platform ID");
   assertNonEmptyString(snapshot.profileId, "Account profile ID");
+  if (snapshot.settings !== undefined)
+    assertPlatformSettings(snapshot.settings);
   assertNonEmptyString(snapshot.displayName, "Account display name");
   if (!platformAccountLifecycles.includes(snapshot.lifecycle)) {
     throw new TypeError("Invalid account lifecycle");

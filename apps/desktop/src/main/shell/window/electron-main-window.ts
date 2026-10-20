@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { AccountBrowserRuntime } from "../../../bridge/account-browser-runtime.js";
 import { ipcChannels } from "../../../bridge/channels.js";
 import type { PublishResultUpdate } from "@nedia-matrix/publishing";
 import { BrowserWindow } from "electron";
@@ -68,6 +69,14 @@ export class ElectronMainWindow {
   sendPublishResult(update: PublishResultUpdate): void {
     if (!this.window || this.window.isDestroyed()) return;
     this.window.webContents.send(ipcChannels.publishResultUpdate, update);
+  }
+
+  sendAccountBrowserRuntimesChanged(runtimes: AccountBrowserRuntime[]): void {
+    if (!this.window || this.window.isDestroyed()) return;
+    this.window.webContents.send(
+      ipcChannels.accountBrowserRuntimesChanged,
+      runtimes,
+    );
   }
 
   sendAccountsChanged(): void {

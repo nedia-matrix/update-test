@@ -1,9 +1,11 @@
+import type { AccountPlatformCatalog } from "@nedia-matrix/platform-sdk";
 import type {
   PlatformModule,
   PublishInterruptionReason,
   PublishObservationSession,
   PublishResultEvent,
   PublishResultMonitor,
+  PluginPublishSession,
 } from "@nedia-matrix/platform-sdk";
 
 import type {
@@ -20,7 +22,7 @@ import type {
   PublishContentForm,
 } from "../domain/index.js";
 
-export interface PlatformCatalog {
+export interface PlatformCatalog extends AccountPlatformCatalog {
   get(id: string): PlatformModule | undefined;
   require(id: string): PlatformModule;
   list(): readonly PlatformModule[];
@@ -29,6 +31,7 @@ export interface PlatformCatalog {
 export interface PublicationAccountView {
   readonly id: string;
   readonly platformId: string;
+  readonly settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
   readonly profileId: string;
   readonly lifecycle: "pending_identity" | "active";
   readonly displayName: string;
@@ -49,6 +52,9 @@ export interface PublicationAccountReader {
 export interface PublicationBrowserPage {
   readonly id: string;
   readonly driver: unknown;
+  readonly sessionProbeClient: unknown;
+  /** Attach a persisted task after account preflight succeeds. */
+  bindPublication(publicationId: string): void;
   readonly profileId: string;
   readonly observationSession?: PublishObservationSession;
   focus(): Promise<void>;
@@ -62,10 +68,11 @@ export interface PublicationBrowserPort {
     account: PublicationAccountView,
     platform: PlatformModule,
   ): Promise<unknown>;
+  /** An undefined task ID opens an unbound page for account preflight. */
   openForPublication(
     account: PublicationAccountView,
     platform: PlatformModule,
-    publicationId: string,
+    publicationId: string | undefined,
     diagnostics?: PublishAutomationDiagnosticTrace,
   ): Promise<PublicationBrowserPage>;
   focusPublication(publicationId: string): Promise<void>;
@@ -157,6 +164,17 @@ export interface ManagedPublishObservation {
 }
 
 export interface PublishObservationPort {
+  /** Direct API results share persistence/events, without a browser result monitor. */
+  attachDirect?(input: {
+    publicationId: string;
+    accountId: string;
+    platformId: string;
+    onInterrupt(): void;
+  }): {
+    readonly id: string;
+    persist(result: PublishResultEvent): Promise<void>;
+    close(): Promise<void>;
+  };
   attach(input: {
     publicationId: string;
     accountId: string;
@@ -200,6 +218,7 @@ export interface PublicationQueryPort {
 }
 
 export interface PublishWorkflowInputs {
+  settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
   mediaReferences?: readonly string[];
   title?: string;
   body?: string;
@@ -291,6 +310,16 @@ export interface PublicationNoticePort {
 }
 
 export interface PublicationApplicationDependencies {
+  pluginPublishing?: {
+    open(input: {
+      account: PublicationAccountView;
+      platform: PlatformModule;
+      publicationId: string;
+      pageId: string;
+      adapterId: string;
+      settings: import("@nedia-matrix/platform-sdk").PlatformSettings;
+    }): Promise<PluginPublishSession>;
+  };
   platforms: PlatformCatalog;
   accounts: PublicationAccountReader;
   browser: PublicationBrowserPort;
@@ -307,9 +336,12 @@ export interface PublicationApplicationDependencies {
   };
   hasActivePublication?(publicationId: string): boolean;
   resolveArchiveAssetPath?(relativePath: string): Promise<string | undefined>;
-  verifyAccount(request: {
-    accountId: string;
-  }): Promise<
+  verifyAccount(
+    request: {
+      accountId: string;
+    },
+    page: PublicationBrowserPage,
+  ): Promise<
     | { status: "authenticated" }
     | { status: "login_required" }
     | { status: "unknown"; reason: string }

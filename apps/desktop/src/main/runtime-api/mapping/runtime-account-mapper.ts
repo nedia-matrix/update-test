@@ -1,3 +1,4 @@
+import { accountSubmissionMode } from "@nedia-matrix/platform-sdk";
 import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
 
 export function toRuntimeAccountSession(
@@ -6,6 +7,8 @@ export function toRuntimeAccountSession(
 ) {
   return {
     runtimeAccountId: account.id,
+    remoteSubmissionMode: accountSubmissionMode(account),
+    settings: { ...account.settings },
     platform: account.platformId,
     loggedIn: account.status === "authenticated",
     status:

@@ -1,3 +1,4 @@
+import type { FingerprintBrowserStatus } from "../bridge/fingerprint-browser.js";
 import type { MatrixDesktopApi } from "../bridge/api.js";
 import { ipcChannels } from "../bridge/channels.js";
 import type {
@@ -25,7 +26,55 @@ import type {
 } from "@nedia-matrix/publishing";
 import { contextBridge, ipcRenderer } from "electron";
 
+import type { AccountBrowserRuntime } from "../bridge/account-browser-runtime.js";
+
 const api: MatrixDesktopApi = {
+  listPlugins: () => ipcRenderer.invoke(ipcChannels.listPlugins),
+  installPlugin: () => ipcRenderer.invoke(ipcChannels.installPlugin),
+  changePlugin: (change) =>
+    ipcRenderer.invoke(ipcChannels.changePlugin, change),
+  setAccountSettings: (request) =>
+    ipcRenderer.invoke(ipcChannels.setAccountSettings, request),
+  listAccountBrowserRuntimes: () =>
+    ipcRenderer.invoke(ipcChannels.listAccountBrowserRuntimes),
+  onAccountBrowserRuntimesChanged: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      runtimes: AccountBrowserRuntime[],
+    ) => listener(runtimes);
+    ipcRenderer.on(ipcChannels.accountBrowserRuntimesChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        ipcChannels.accountBrowserRuntimesChanged,
+        handler,
+      );
+  },
+  getAccountBrowserState: (request) =>
+    ipcRenderer.invoke(ipcChannels.getAccountBrowserState, request),
+  beginAccountBrowserSwitch: (request) =>
+    ipcRenderer.invoke(ipcChannels.beginAccountBrowserSwitch, request),
+  getAccountBrowserSwitch: (request) =>
+    ipcRenderer.invoke(ipcChannels.getAccountBrowserSwitch, request),
+  cancelAccountBrowserSwitch: (request) =>
+    ipcRenderer.invoke(ipcChannels.cancelAccountBrowserSwitch, request),
+  getFingerprintBrowserStatus: () =>
+    ipcRenderer.invoke(ipcChannels.getFingerprintBrowserStatus),
+  installFingerprintBrowser: (request) =>
+    ipcRenderer.invoke(ipcChannels.installFingerprintBrowser, request),
+  cancelFingerprintBrowserInstall: (request) =>
+    ipcRenderer.invoke(ipcChannels.cancelFingerprintBrowserInstall, request),
+  onFingerprintBrowserChanged: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: FingerprintBrowserStatus,
+    ) => listener(state);
+    ipcRenderer.on(ipcChannels.fingerprintBrowserChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        ipcChannels.fingerprintBrowserChanged,
+        handler,
+      );
+  },
   getPreferences: (request) =>
     ipcRenderer.invoke(ipcChannels.getPreferences, request),
   updatePreferences: (request) =>
@@ -87,6 +136,8 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.preparePublishDraft, request),
   queryPublications: (request: PublicationQuery) =>
     ipcRenderer.invoke(ipcChannels.queryPublications, request),
+  openPublicationAsset: (request) =>
+    ipcRenderer.invoke(ipcChannels.openPublicationAsset, request),
   getPublicationTask: (request: OpenPublicationRequest) =>
     ipcRenderer.invoke(ipcChannels.getPublicationTask, request),
   getPublicationPlatformContent: (request: OpenPublicationRequest) =>
@@ -119,6 +170,8 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.getLocalRuntimeStatus),
   setLocalRuntimeRunning: (request: SetLocalRuntimeRunningRequest) =>
     ipcRenderer.invoke(ipcChannels.setLocalRuntimeRunning, request),
+  getTechnicalInformation: () =>
+    ipcRenderer.invoke(ipcChannels.getTechnicalInformation),
   openDiagnosticDirectory: () =>
     ipcRenderer.invoke(ipcChannels.openDiagnosticDirectory),
   findDiagnosticTrace: (request: FindDiagnosticTraceRequest) =>

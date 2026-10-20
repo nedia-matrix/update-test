@@ -73,6 +73,17 @@ jobs:
         working-directory: apps/desktop/installer
         run: go test ./...
 
+      - name: Build platform dependencies
+        run: pnpm desktop:build-dependencies
+
+      - name: Build and sign platform plugins
+        run: pnpm --filter @nedia-matrix/desktop plugins:build
+        env:
+          NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
+          NEDIA_UPDATE_KEY_ID: ${{ vars.NEDIA_UPDATE_KEY_ID }}
+          NEDIA_UPDATE_PRIVATE_KEY: ${{ secrets.NEDIA_UPDATE_PRIVATE_KEY }}
+          NEDIA_XHS_ASSET_DISTRIBUTION_APPROVED: ${{ vars.NEDIA_XHS_ASSET_DISTRIBUTION_APPROVED }}
+
       - name: Package application
         run: ${{ matrix.package_command }}
         env:
@@ -110,7 +121,7 @@ jobs:
           merge-multiple: true
 
       - name: Generate trusted update manifest
-        run: node scripts/update-manifest.mjs release-assets "${GITHUB_REF_NAME#v}" github
+        run: node scripts/publish/update-manifest.mjs release-assets "${GITHUB_REF_NAME#v}" github
         env:
           NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
           NEDIA_UPDATE_KEY_ID: ${{ vars.NEDIA_UPDATE_KEY_ID }}

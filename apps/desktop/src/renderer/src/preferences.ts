@@ -34,7 +34,8 @@ export async function loadPreferences(): Promise<{
         appearance: {
           theme: isThemePreference(legacyTheme) ? legacyTheme : "system",
         },
-        updates: { sourceUrl: null },
+        updates: { sourceUrl: null, includePlugins: true },
+        browser: { defaultProvider: "system" },
       },
       error: true,
     };

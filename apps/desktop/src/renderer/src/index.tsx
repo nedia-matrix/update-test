@@ -1,5 +1,6 @@
 import { render } from "preact";
 
+import { BrowserOnboarding } from "./components/browser-onboarding.js";
 import { App } from "./app.js";
 import { AppContext } from "./app-context.js";
 import { loadPreferences } from "./preferences.js";
@@ -22,9 +23,12 @@ if (preferencesError)
   );
 
 render(
-  <App
-    context={context}
-    initialThemePreference={preferences.appearance.theme}
-  />,
+  <>
+    <App
+      context={context}
+      initialThemePreference={preferences.appearance.theme}
+    />
+    <BrowserOnboarding />
+  </>,
   requireElement(document, "#app"),
 );

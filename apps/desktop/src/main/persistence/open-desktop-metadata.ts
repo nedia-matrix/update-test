@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { DesktopMetadataDatabase } from "./desktop-metadata-database.js";
 import { importLegacyStores } from "./legacy-store-import.js";
+import { SqliteAccountBrowserSwitchRepository } from "../accounts/infrastructure/sqlite-account-browser-switch-repository.js";
 import { SqliteAccountRepository } from "../accounts/infrastructure/sqlite-account-repository.js";
 import { SqlitePublicationRepository } from "../publishing/infrastructure/sqlite-publication-repository.js";
 import { SqlitePublicationAttentionRepository } from "../publishing/infrastructure/sqlite-publication-attention-repository.js";
@@ -32,6 +33,9 @@ export function openDesktopMetadata(
     return {
       database,
       accounts,
+      accountBrowserSwitches: new SqliteAccountBrowserSwitchRepository(
+        database,
+      ),
       publications,
       publicationAttention,
       inbox,

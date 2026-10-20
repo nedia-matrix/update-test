@@ -40,6 +40,7 @@ export interface PublishObservationSession {
 }
 
 export interface PublishMonitorContext {
+  readonly settings?: import("./settings.js").PlatformSettings;
   contentForm: PublishContentForm;
   submissionMode?: "automatic" | "manual_confirmation";
   session: PublishObservationSession;
@@ -135,4 +136,38 @@ export class PublishMonitorLifecycle {
 
 export interface PlatformPublishRuntime {
   createResultMonitor(context: PublishMonitorContext): PublishResultMonitor;
+}
+
+export type DirectPublishResult = Extract<
+  PublishResultEvent,
+  { kind: "published" | "failed" | "uncertain" | "cancelled" }
+>;
+/** Structural cancellation contract keeps the SDK usable in non-DOM platform packages. */
+export interface PublishAbortSignal {
+  readonly aborted: boolean;
+  addEventListener(
+    type: "abort",
+    listener: () => void,
+    options?: { once?: boolean },
+  ): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+}
+
+/** Task-scoped adapter. Prepared material stays in the adapter, never in domain state. */
+export interface PluginPublishSession {
+  prepare(
+    input: {
+      title: string;
+      body: string;
+      mediaReferences: readonly string[];
+      tags: readonly string[];
+    },
+    signal: PublishAbortSignal,
+  ): Promise<void>;
+  /** Await the durable application commit immediately before sending the one creation request. */
+  submit(input: {
+    signal: PublishAbortSignal;
+    beforeCommit(): Promise<void>;
+  }): Promise<DirectPublishResult>;
+  close(): Promise<void>;
 }

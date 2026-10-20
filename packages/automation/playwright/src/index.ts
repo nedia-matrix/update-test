@@ -1,4 +1,8 @@
 export { PlaywrightAutomationDriver } from "./automation-driver.js";
+export {
+  openPinnedBrowserScriptHost,
+  type PinnedBrowserScriptAsset,
+} from "./pinned-script-host.js";
 export { isAllowedPlatformNavigation } from "./navigation-policy.js";
 export { createPlaywrightPlatformDataClient } from "./platform-data-client.js";
 export {
@@ -26,6 +30,26 @@ export { HumanInteractionSession } from "./human-interaction.js";
 export {
   browserRuntimeFromEnvironment,
   loadBrowserRuntime,
+  initializeBrowserRuntime,
+  readStoredBrowserRuntime,
+  type StoredBrowserRuntime,
   verifyFingerprintBrowser,
   type BrowserRuntimeConfiguration,
 } from "./browser-runtime.js";
+
+export {
+  fingerprintBrowserVersion,
+  fingerprintBrowserAsset,
+  installFingerprintBrowser,
+  readFingerprintInstallation,
+  recoverFingerprintInstallation,
+  FingerprintInstallError,
+  type FingerprintInstallErrorCode,
+  type FingerprintInstallProgress,
+  type FingerprintInstallerDependencies,
+} from "./fingerprint-browser-installer.js";
+
+export {
+  contextRequestPacer,
+  retryAfterMilliseconds,
+} from "./request-pacing.js";

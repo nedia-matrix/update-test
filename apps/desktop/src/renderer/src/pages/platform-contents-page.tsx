@@ -6,7 +6,12 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 
 import type { AppContext } from "../app-context.js";
 import { Icon } from "../components/icons.js";
-import { accountLabel, errorMessage, formatTime } from "../shared.js";
+import {
+  accountLabel,
+  errorMessage,
+  formatTime,
+  isPlatformAvailable,
+} from "../shared.js";
 
 interface ContentState {
   items: PlatformContentSnapshot[];
@@ -123,7 +128,11 @@ export function PlatformContentsPage({
   };
 
   const openContent = async (content: PlatformContentSnapshot) => {
-    if (!content.contentUrl) return;
+    if (
+      !content.contentUrl ||
+      !isPlatformAvailable(context.platforms, content.platformId)
+    )
+      return;
     try {
       await window.matrix.openPlatformContent({
         accountId: content.accountId,
@@ -157,7 +166,12 @@ export function PlatformContentsPage({
           <button
             type="button"
             class="compact-button"
-            disabled={!account || account.status !== "authenticated" || syncing}
+            disabled={
+              !account ||
+              account.status !== "authenticated" ||
+              syncing ||
+              !isPlatformAvailable(context.platforms, account.platformId)
+            }
             onClick={() => void synchronize()}
           >
             <Icon name="refresh" size={16} />
@@ -195,6 +209,10 @@ export function PlatformContentsPage({
             data.items.map((content) => (
               <PlatformContentRow
                 content={content}
+                platformAvailable={isPlatformAvailable(
+                  context.platforms,
+                  content.platformId,
+                )}
                 key={content.id}
                 onOpen={() => void openContent(content)}
               />
@@ -226,19 +244,26 @@ function SyncRunStatus({ run }: { run: PlatformContentSyncRun }) {
 
 function PlatformContentRow({
   content,
+  platformAvailable,
   onOpen,
 }: {
   content: PlatformContentSnapshot;
+  platformAvailable: boolean;
   onOpen(): void;
 }) {
   return (
     <button
       class="platform-content-row"
       type="button"
-      aria-disabled={!content.contentUrl}
-      tabIndex={content.contentUrl ? 0 : -1}
+      disabled={!content.contentUrl || !platformAvailable}
+      aria-disabled={!content.contentUrl || !platformAvailable}
+      tabIndex={content.contentUrl && platformAvailable ? 0 : -1}
       title={
-        content.contentUrl ? "在浏览器中打开平台内容" : "该内容没有可用链接"
+        !platformAvailable
+          ? "平台插件不可用，无法打开作品"
+          : content.contentUrl
+            ? "在浏览器中打开平台内容"
+            : "该内容没有可用链接"
       }
       onClick={onOpen}
     >

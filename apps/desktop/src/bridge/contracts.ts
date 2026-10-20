@@ -10,6 +10,9 @@ export interface PlatformLoginEntrySummary {
 }
 
 export interface PlatformSummary {
+  settings?: import("@nedia-matrix/platform-sdk").PlatformSettingDefinitions;
+  iconUrl?: string;
+  unavailableReason?: string;
   id: string;
   displayName: string;
   entryUrl: string;
@@ -34,6 +37,16 @@ export interface PlatformSummary {
       separator: string;
     };
   }>;
+}
+
+export interface ApplicationTechnicalInformation {
+  applicationVersion: string;
+  databaseSchemaVersion: number;
+  sqliteVersion: string;
+  browserVersion: string;
+  browserAvailable: boolean;
+  operatingSystem: string;
+  architecture: string;
 }
 
 export interface LocalRuntimeStatus {

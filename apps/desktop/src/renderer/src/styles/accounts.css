@@ -71,7 +71,7 @@ button.account-recent-card {
   line-height: normal;
   text-align: left;
 }
-button.account-recent-card:hover {
+button.account-recent-card:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--surface-hover);
 }
@@ -174,4 +174,147 @@ button.account-recent-card[aria-disabled="true"] {
 }
 .dialog-platform-grid {
   padding: 16px;
+}
+
+.account-settings {
+  display: grid;
+  gap: 14px;
+}
+.account-settings[hidden] {
+  display: none;
+}
+.account-settings-row,
+.account-removal-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 14px 16px;
+}
+.account-settings-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+.account-settings-copy strong,
+.account-removal-settings h2,
+.account-browser-switch-confirm > strong {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.5;
+}
+.account-settings-copy p,
+.account-browser-switch-confirm p,
+.account-browser-feedback p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.account-settings-value {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+.account-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.account-settings-actions button,
+.account-remove-button {
+  flex: none;
+  white-space: nowrap;
+}
+.account-browser-switch-confirm,
+.account-browser-feedback {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.account-browser-switch-confirm {
+  background: var(--surface-muted);
+  border-radius: 0 0 8px 8px;
+}
+.account-browser-feedback [role="alert"] {
+  color: var(--danger);
+}
+.account-remove-button {
+  color: var(--danger);
+}
+.account-remove-button:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.account-browser-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: inherit;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+.account-browser-status.running {
+  color: var(--accent);
+}
+
+.sidebar-account-avatar {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.sidebar-account-avatar .account-browser-status {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--sidebar-bg);
+}
+.account-navigation
+  > button.active
+  .sidebar-account-avatar
+  .account-browser-status {
+  background: var(--surface);
+}
+.account-navigation .sidebar-account-copy small {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.account-plugin-settings > .account-settings-copy {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+.account-plugin-settings > .account-settings-copy label {
+  display: grid;
+  gap: 8px;
+}
+.account-plugin-settings > .account-settings-copy button {
+  justify-self: start;
+}
+
+.account-plugin-settings .segmented-control {
+  flex: 0 0 180px;
+}
+
+.account-plugin-settings > .account-settings-row + .account-settings-row {
+  border-top: 1px solid var(--border);
 }

@@ -34,6 +34,7 @@ export interface InstallContext {
   resources: string;
   userData: string;
   currentVersion: string;
+  includePlugins?: boolean;
 }
 export interface InstallRequest {
   id: string;
@@ -151,6 +152,11 @@ export async function prepareInstallation(
     flag: "wx",
     mode: 0o600,
   });
+  await writeFile(
+    join(directory, "plugin-choice.json"),
+    JSON.stringify({ id, includePlugins: context.includePlugins === true }),
+    { flag: "wx", mode: 0o600 },
+  );
   const child = spawn(helper, [join(directory, "request.json")], {
     detached: true,
     stdio: "ignore",
@@ -219,10 +225,12 @@ export async function prepareInstallation(
   };
 }
 
-/** Keep every backup. Only mark success after startup/migrations, never merely after launching. */
+/** Only confirmed startup allows recycling the Windows portable backup. */
 export async function recordUpdateStartup(
   context: InstallContext,
   completed: boolean,
+  trashItem?: (file: string) => Promise<void>,
+  stagePlugins?: () => void,
 ): Promise<void> {
   if (!context.packaged) return;
   const root = join(context.userData, "application-updates", "installations");
@@ -245,7 +253,7 @@ export async function recordUpdateStartup(
       () => "",
     );
     if (!bytes || bytes.length > 32_768) continue;
-    let journal: { request?: InstallRequest; stage?: string };
+    let journal: { request?: InstallRequest; stage?: string; backup?: string };
     try {
       journal = JSON.parse(bytes);
     } catch {
@@ -269,13 +277,135 @@ export async function recordUpdateStartup(
         "installer-starting",
         "failed:launching",
         "failed:installer-starting",
+        "completed",
       ].includes(journal.stage ?? "")
     )
       continue;
+    if (
+      journal.stage === "completed" &&
+      (!completed ||
+        (await readFile(join(directory, "success"), "utf8").catch(() => "")) !==
+          request.id)
+    )
+      continue;
+    if (
+      !completed &&
+      stagePlugins &&
+      (await readFile(join(directory, "plugins-staged"), "utf8").catch(
+        () => "",
+      )) !== request.id
+    ) {
+      const choice = await readFile(
+        join(directory, "plugin-choice.json"),
+        "utf8",
+      ).catch(() => "");
+      if (choice) {
+        let selected: { id?: string; includePlugins?: boolean } | undefined;
+        try {
+          selected = JSON.parse(choice);
+        } catch {
+          /* Invalid intent must never authorize plugin replacement. */
+        }
+        if (selected?.id === request.id && selected.includePlugins === true)
+          stagePlugins();
+      }
+      await writeFile(join(directory, "plugins-staged"), request.id, {
+        mode: 0o600,
+      });
+    }
     await writeFile(
       join(directory, completed ? "success" : "migration-started"),
       request.id,
       { mode: 0o600 },
     );
+    if (
+      completed &&
+      context.platform === "win32" &&
+      context.distribution === "portable" &&
+      trashItem
+    )
+      await recyclePortableBackup(
+        directory,
+        request,
+        journal.backup,
+        trashItem,
+      );
   }
+}
+
+const recycling = new Map<string, Promise<void>>();
+
+function recyclePortableBackup(
+  directory: string,
+  request: InstallRequest,
+  recordedBackup: string | undefined,
+  trashItem: (file: string) => Promise<void>,
+): Promise<void> {
+  const active = recycling.get(directory);
+  if (active) return active;
+  const operation = (async () => {
+    const receipt = join(directory, "backup-recycle.json");
+    const backup = `${request.target}.nedia-backup-${request.id}`;
+    const previous = await readFile(receipt, "utf8").catch(() => "");
+    try {
+      const result = JSON.parse(previous);
+      if (
+        result.status === "recycled" &&
+        result.id === request.id &&
+        result.backup === backup
+      )
+        return;
+    } catch {
+      /* No completed receipt yet. */
+    }
+    let status = "recycled";
+    let error: string | undefined;
+    try {
+      // Derive the only permitted file instead of trusting a free-form journal path.
+      if (recordedBackup !== backup)
+        throw new Error("旧版备份路径与本次安装不一致，保留文件");
+      const info = await lstat(backup);
+      if (
+        !info.isFile() ||
+        info.isSymbolicLink() ||
+        (await realpath(backup)) !== backup
+      )
+        throw new Error("旧版备份不是预期的普通文件，保留文件");
+      await trashItem(backup);
+      if (
+        await lstat(backup).catch((cause: NodeJS.ErrnoException) => {
+          if (cause.code === "ENOENT") return null;
+          throw cause;
+        })
+      )
+        throw new Error("回收站操作完成后旧备份仍在原位置，保留备份并等待重试");
+    } catch (cause) {
+      status = "failed";
+      error =
+        cause instanceof Error
+          ? cause.message
+          : "旧版备份移入回收站失败，保留备份";
+      console.warn(
+        "Portable update succeeded but old backup could not be recycled",
+        error,
+      );
+    }
+    // Cleanup has its own receipt: it must not turn a successfully installed update into failure.
+    await writeFile(
+      receipt,
+      JSON.stringify({
+        id: request.id,
+        backup,
+        status,
+        ...(error ? { error } : {}),
+      }),
+      { mode: 0o600 },
+    ).catch((cause: unknown) => {
+      console.warn("Failed to record portable backup recycling result", cause);
+    });
+  })().finally(() => {
+    recycling.delete(directory);
+  });
+  recycling.set(directory, operation);
+  return operation;
 }

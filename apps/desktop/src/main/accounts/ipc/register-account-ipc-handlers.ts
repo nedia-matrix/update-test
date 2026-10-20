@@ -3,6 +3,8 @@ import { ipcMain } from "electron";
 
 import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 
+import type { AccountBrowserRuntime } from "../../../bridge/account-browser-runtime.js";
+
 type AccountIpcApplication = Pick<
   NediaMatrixUseCases,
   "accounts" | "platformSummaries"
@@ -10,10 +12,19 @@ type AccountIpcApplication = Pick<
 
 export function registerAccountIpcHandlers(
   application: AccountIpcApplication,
+  browserRuntimes: { listAccountBrowserRuntimes(): AccountBrowserRuntime[] },
 ): void {
+  ipcMain.handle(ipcChannels.listAccountBrowserRuntimes, () =>
+    browserRuntimes.listAccountBrowserRuntimes(),
+  );
   ipcMain.handle(ipcChannels.listPlatforms, () =>
     application.platformSummaries(),
   );
+  ipcMain.handle(ipcChannels.setAccountSettings, (_event, request) => {
+    if (!application.accounts.setSettings)
+      throw new Error("账号发布设置不可用");
+    return application.accounts.setSettings(request);
+  });
   ipcMain.handle(ipcChannels.listPlatformAccounts, () =>
     application.accounts.list(),
   );

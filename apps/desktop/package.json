@@ -1,29 +1,28 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.3.5",
+  "version": "0.7.0",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "build": "electron-vite build",
-    "dev": "electron-vite dev",
-    "package:mac": "node ../../scripts/package-desktop.mjs mac",
-    "package:win": "node ../../scripts/package-desktop.mjs win",
-    "package:win:portable": "node ../../scripts/package-desktop.mjs win:portable",
+    "dev": "pnpm plugins:dev && electron-vite dev",
+    "package:mac": "node ../../scripts/package/package-desktop.mjs mac",
+    "package:win": "node ../../scripts/package/package-desktop.mjs win",
+    "package:win:portable": "node ../../scripts/package/package-desktop.mjs win:portable",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "plugins:build": "node ../../scripts/package/build-platform-plugins.mjs",
+    "plugins:dev": "node ../../scripts/package/build-platform-plugins.mjs --development"
   },
   "dependencies": {
     "@nedia-matrix/account-management": "workspace:*",
-    "@nedia-matrix/publishing": "workspace:*",
     "@nedia-matrix/automation-engine": "workspace:*",
     "@nedia-matrix/automation-playwright": "workspace:*",
     "@nedia-matrix/diagnostics": "workspace:*",
-    "@nedia-matrix/platform-sdk": "workspace:*",
     "@nedia-matrix/platform-content": "workspace:*",
-    "@nedia-matrix/platform-douyin": "workspace:*",
-    "@nedia-matrix/platform-kuaishou": "workspace:*",
-    "@nedia-matrix/platform-xiaohongshu": "workspace:*",
+    "@nedia-matrix/platform-sdk": "workspace:*",
+    "@nedia-matrix/publishing": "workspace:*",
     "preact": "^10.29.8"
   },
   "devDependencies": {
@@ -32,6 +31,7 @@
     "electron": "43.2.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "javascript-obfuscator": "4.2.2",
     "typescript": "catalog:",
     "vite": "^7.3.6",
     "vitest": "catalog:"
@@ -61,6 +61,15 @@
       {
         "from": "resources/mac-tray.png",
         "to": "mac-tray.png"
+      },
+      {
+        "from": "resources/plugins",
+        "to": "plugins",
+        "filter": [
+          "platform.douyin.nmp",
+          "platform.kuaishou.nmp",
+          "platform.xiaohongshu.nmp"
+        ]
       }
     ],
     "mac": {

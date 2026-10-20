@@ -1,3 +1,4 @@
+import { platformSettingsDefinitions } from "@nedia-matrix/platform-sdk";
 import type { PlatformModule } from "@nedia-matrix/platform-sdk";
 
 import type { PlatformSummary } from "../../bridge/contracts.js";
@@ -5,6 +6,8 @@ import type { PlatformSummary } from "../../bridge/contracts.js";
 export function toPlatformSummary(platform: PlatformModule): PlatformSummary {
   return {
     id: platform.id,
+    settings: platformSettingsDefinitions(platform),
+    iconUrl: platform.iconUrl,
     displayName: platform.displayName,
     entryUrl: platform.browser.startUrl,
     rulesVersion: platform.rulesVersion,

@@ -74,8 +74,10 @@ export class SqliteAccountRepository extends AccountStateRepository {
         reason: "account_deleted",
       };
       this.database.connection
-        .prepare("INSERT INTO retired_browser_profiles VALUES (?, ?)")
-        .run(profile.profileId, JSON.stringify(profile));
+        .prepare(
+          "INSERT INTO retired_browser_profiles VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET record=excluded.record",
+        )
+        .run(account.profileId, JSON.stringify(profile));
     });
   }
 }

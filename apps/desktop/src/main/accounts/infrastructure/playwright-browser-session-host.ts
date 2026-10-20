@@ -1,16 +1,22 @@
+import type { AccountBrowserRuntime } from "../../../bridge/account-browser-runtime.js";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import {
   browserProfileDirectory,
   createManagedBrowserPage,
   createPlaywrightPlatformDataClient,
+  createPlaywrightSessionProbeClient,
   openPersistentBrowserContext,
+  readStoredBrowserRuntime,
+  type BrowserRuntimeConfiguration,
   type ManagedBrowserPage,
   type OpenedBrowserContext,
 } from "@nedia-matrix/automation-playwright";
 import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
 import type { PublishAutomationDiagnosticTrace } from "@nedia-matrix/publishing";
 import type {
+  PlatformDataClient,
   PlatformLoginEntry,
   PlatformModule,
 } from "@nedia-matrix/platform-sdk";
@@ -29,6 +35,7 @@ interface BrowserAutomationDiagnosticTrace {
 }
 
 interface ProfileEntry {
+  runtime: BrowserRuntimeConfiguration;
   accountId: string;
   browser: OpenedBrowserContext;
   pages: Map<string, ManagedBrowserPage>;
@@ -54,18 +61,127 @@ const defaults: Dependencies = {
   evidenceRoot: () => join(app.getPath("userData"), "diagnostics", "evidence"),
 };
 
+export type OpenPlatformDataClient = (input: {
+  base: PlatformDataClient;
+  context: OpenedBrowserContext["context"];
+  account: PlatformAccountSnapshot;
+  platform: PlatformModule;
+  assertOwnership(): void;
+}) => { dataClient: PlatformDataClient; close(): Promise<void> };
+
 export class PlaywrightBrowserSessionHost {
   private readonly profiles = new Map<string, ProfileEntry>();
   private readonly transitions = new Map<string, Promise<void>>();
   private readonly channels = new Map<string, string>();
   private stopping = false;
+  private browserMaintenance: symbol | undefined;
+  private readonly browserSwitches = new Map<
+    string,
+    { originalProfileId: string; candidateProfileId: string }
+  >();
 
   constructor(
-    private readonly onSessionClosed: (accountId: string) => void,
+    private readonly onSessionClosed: (
+      accountId: string,
+      profileId: string,
+    ) => void,
     private readonly dependencies: Dependencies = defaults,
     private readonly onUnsupportedPopup: (publicationId: string) => void = () =>
       undefined,
+    private readonly onRuntimesChanged: (
+      runtimes: AccountBrowserRuntime[],
+    ) => void = () => undefined,
+    private readonly openDataClient?: OpenPlatformDataClient,
   ) {}
+
+  listAccountBrowserRuntimes(): AccountBrowserRuntime[] {
+    const modes = new Map<string, AccountBrowserRuntime["mode"]>();
+    for (const entry of this.profiles.values()) {
+      const mode = entry.browser.headless ? "background" : "window";
+      if (modes.get(entry.accountId) !== "window")
+        modes.set(entry.accountId, mode);
+    }
+    return [...modes].map(([accountId, mode]) => ({ accountId, mode }));
+  }
+
+  private forgetProfile(profileId: string): void {
+    if (this.profiles.delete(profileId))
+      this.onRuntimesChanged(this.listAccountBrowserRuntimes());
+  }
+
+  acquireBrowserMaintenance(managedRoot?: string): () => void {
+    const canonical = (path: string) => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return resolve(path);
+      }
+    };
+    const root = managedRoot ? canonical(managedRoot) : undefined;
+    if (
+      this.stopping ||
+      this.browserMaintenance ||
+      this.browserSwitches.size ||
+      this.transitions.size ||
+      [...this.profiles.values()].some((entry) => {
+        if (entry.runtime.provider !== "fingerprint") return false;
+        if (!root) return true;
+        const part = relative(root, canonical(entry.runtime.executablePath!));
+        return (
+          !!part && !isAbsolute(part) && !part.split(/[\\/]/).includes("..")
+        );
+      })
+    )
+      throw new Error("浏览器环境正在使用");
+    const token = Symbol("browser-maintenance");
+    this.browserMaintenance = token;
+    return () => {
+      if (this.browserMaintenance === token)
+        this.browserMaintenance = undefined;
+    };
+  }
+
+  isAccountBrowserBusy(accountId: string, profileId: string): boolean {
+    return (
+      this.transitions.has(profileId) ||
+      [...this.profiles.entries()].some(
+        ([id, entry]) =>
+          !(
+            id === this.browserSwitches.get(accountId)?.candidateProfileId &&
+            id !== profileId
+          ) &&
+          (entry.accountId === accountId || id === profileId) &&
+          (entry.syncing > 0 ||
+            [...entry.pages.values()].some(
+              (page) => page.purpose === "publish" || !page.page.isClosed(),
+            )),
+      )
+    );
+  }
+
+  acquireAccountBrowserSwitch(
+    accountId: string,
+    originalProfileId: string,
+    candidateProfileId: string,
+  ): () => void {
+    if (
+      this.stopping ||
+      this.browserMaintenance ||
+      this.browserSwitches.has(accountId) ||
+      this.isAccountBrowserBusy(accountId, originalProfileId)
+    )
+      throw new Error("账号浏览器仍有活动任务或人工页面，请先关闭相关页面");
+    const lease = { originalProfileId, candidateProfileId };
+    this.browserSwitches.set(accountId, lease);
+    return () => {
+      if (this.browserSwitches.get(accountId) === lease)
+        this.browserSwitches.delete(accountId);
+    };
+  }
+
+  invalidateProfileChannels(...profileIds: string[]): void {
+    for (const profileId of profileIds) this.channels.delete(profileId);
+  }
 
   get size() {
     return this.profiles.size;
@@ -97,24 +213,54 @@ export class PlaywrightBrowserSessionHost {
     headless: boolean,
   ) {
     if (this.stopping) throw new Error("Desktop is shutting down");
+    if (this.browserMaintenance)
+      throw new Error("定制浏览器正在安装或修复，请等待完成");
+    const switching = this.browserSwitches.get(account.id);
+    if (switching && account.profileId !== switching.candidateProfileId)
+      throw new Error("账号正在切换浏览器环境");
     let entry = this.profiles.get(account.profileId);
+    if (entry && entry.accountId !== account.id)
+      throw new Error(
+        "Browser Profile is owned by another account; shared profiles are unsupported",
+      );
     if (entry?.browser.headless && !headless) {
+      // A visible login/user request must never close an in-flight API publication.
+      if (this.hasPublication(entry))
+        throw new Error("账号正在后台发布，请任务结束后再打开浏览器");
       await entry.idle;
       await entry.browser.close();
       if (this.profiles.get(account.profileId) === entry)
-        this.profiles.delete(account.profileId);
+        this.forgetProfile(account.profileId);
       entry = undefined;
     }
     if (entry) return entry;
     if (this.stopping) throw new Error("Desktop is shutting down");
     const channel = this.channels.get(account.profileId);
+    const stored = await readStoredBrowserRuntime(
+      browserProfileDirectory(
+        this.dependencies.profilesRoot(),
+        account.profileId,
+      ),
+    );
+    // Historical profiles without metadata are system profiles. Desktop never
+    // lets environment variables migrate them or override a pinned external binary.
+    const runtime: BrowserRuntimeConfiguration = stored
+      ? {
+          provider: stored.provider,
+          ...(stored.executablePath
+            ? { executablePath: stored.executablePath }
+            : {}),
+        }
+      : { provider: "system" };
     const browser = await this.dependencies.openContext({
       ...this.options(account, platform),
       headless,
+      runtime,
       ...(channel ? { preferredChannel: channel } : {}),
     });
     this.channels.set(account.profileId, browser.channel);
     const opened: ProfileEntry = {
+      runtime,
       accountId: account.id,
       browser,
       pages: new Map(),
@@ -128,10 +274,12 @@ export class PlaywrightBrowserSessionHost {
     this.profiles.set(account.profileId, opened);
     browser.context.once("close", () => {
       if (this.profiles.get(account.profileId) !== opened) return;
-      this.profiles.delete(account.profileId);
+      this.forgetProfile(account.profileId);
       // Closing a sync-only browser must not discard a pending publish media selection.
-      if (!browser.headless) this.onSessionClosed(account.id);
+      if (!browser.headless)
+        this.onSessionClosed(account.id, account.profileId);
     });
+    this.onRuntimesChanged(this.listAccountBrowserRuntimes());
     for (const existingPage of browser.context.pages()) {
       if (existingPage.url() === "about:blank") continue;
       const managed = await this.dependencies.createPage(
@@ -211,8 +359,8 @@ export class PlaywrightBrowserSessionHost {
             entry.pages.delete(child.id);
             void child.dispose();
           });
-          if (purpose === "publish" && publicationId)
-            this.onUnsupportedPopup(publicationId);
+          if (purpose === "publish" && page.publicationId)
+            this.onUnsupportedPopup(page.publicationId);
         })
         .catch((error: unknown) =>
           console.error("Failed to register browser popup", error),
@@ -416,20 +564,23 @@ export class PlaywrightBrowserSessionHost {
   async openForPublication(
     account: PlatformAccountSnapshot,
     platform: PlatformModule,
-    publicationId: string,
+    publicationId: string | undefined,
     diagnostics?: PublishAutomationDiagnosticTrace,
   ) {
     diagnostics = isolateDiagnostics(diagnostics);
     return this.withProfileTransition(account.profileId, async () => {
+      const headless =
+        platform.publishing?.executionMode === "publisher" &&
+        platform.browser.sessionCapabilities?.headlessPublish === true;
       const reusedContext = this.profiles.has(account.profileId);
       diagnostics?.report({
         component: "browser",
         event: "browser.context.opening",
-        details: { purpose: "publish", headless: false },
+        details: { purpose: "publish", headless },
       });
       let entry: ProfileEntry;
       try {
-        entry = await this.ensureContext(account, platform, false);
+        entry = await this.ensureContext(account, platform, headless);
       } catch (error) {
         diagnostics?.report({
           component: "browser",
@@ -461,25 +612,49 @@ export class PlaywrightBrowserSessionHost {
         throw new Error("账号正在执行任务");
       if (platform.browser.sessionCapabilities?.isolatedPages === false)
         throw new Error("此平台不支持独立发布页，请使用平台页面人工发布");
-      const page = await this.newPage(
-        entry,
-        account,
-        platform,
-        "publish",
-        publicationId,
-        diagnostics,
-      );
+      let page: ManagedBrowserPage;
+      try {
+        page = await this.newPage(
+          entry,
+          account,
+          platform,
+          "publish",
+          publicationId,
+          diagnostics,
+        );
+      } catch (error) {
+        await this.closeIdleBackground(account.profileId, entry);
+        throw error;
+      }
       const verifyIdentity = async () => {
         const startedAt = Date.now();
         diagnostics?.report({
           component: "session",
           event: "session.detection.started",
         });
-        const detected = await this.dependencies.detectSession(
-          platform.accounts.detection,
-          page.driver,
-          page.sessionProbeClient,
-        );
+        // API preparation can outlive the original page response's replay window.
+        // Subscribe before navigating so each recheck gets fresh page evidence,
+        // including when preparation finished within the replay window.
+        const freshProbe =
+          platform.publishing?.executionMode === "publisher"
+            ? createPlaywrightSessionProbeClient(
+                entry.browser.context,
+                page.page,
+                platform.browser,
+                platform.accounts.detection,
+              )
+            : undefined;
+        let detected;
+        try {
+          if (freshProbe) await page.driver.navigate(platform.browser.startUrl);
+          detected = await this.dependencies.detectSession(
+            platform.accounts.detection,
+            page.driver,
+            freshProbe ?? page.sessionProbeClient,
+          );
+        } finally {
+          freshProbe?.dispose();
+        }
         diagnostics?.report({
           component: "session",
           event: "session.detection.completed",
@@ -502,16 +677,39 @@ export class PlaywrightBrowserSessionHost {
         }
       };
       try {
-        await page.driver.navigate(platform.browser.startUrl);
-        await verifyIdentity();
+        if (
+          !publicationId ||
+          platform.publishing?.executionMode !== "publisher"
+        )
+          await page.driver.navigate(platform.browser.startUrl);
+        // Unbound pages are verified by the account service during preflight.
+        // It also persists detection results and returns actionable login errors.
+        if (publicationId) await verifyIdentity();
       } catch (error) {
         await page.close();
         entry.pages.delete(page.id);
+        await this.closeIdleBackground(account.profileId, entry);
         throw error;
       }
       let released = false;
+      const releaseBackground = () =>
+        this.withProfileTransition(account.profileId, () =>
+          this.closeIdleBackground(account.profileId, entry),
+        );
       return {
         ...page,
+        bindPublication(id: string) {
+          if (page.publicationId && page.publicationId !== id)
+            throw new Error("发布页已绑定其他任务");
+          Object.defineProperty(page, "publicationId", {
+            value: id,
+            configurable: true,
+            enumerable: true,
+          });
+        },
+        get publicationId() {
+          return page.publicationId;
+        },
         verifyIdentity,
         get owner() {
           return page.owner;
@@ -548,7 +746,10 @@ export class PlaywrightBrowserSessionHost {
           });
         },
         async release() {
-          if (released) return;
+          if (released) {
+            await releaseBackground();
+            return;
+          }
           await page.release();
           released = true;
           entry.pages.delete(page.id);
@@ -563,9 +764,45 @@ export class PlaywrightBrowserSessionHost {
             });
             page.page.once("close", () => entry.pages.delete(page.id));
           }
+          await releaseBackground();
         },
       };
     });
+  }
+
+  private async closeIdleBackground(
+    profileId: string,
+    entry: ProfileEntry,
+  ): Promise<void> {
+    if (
+      this.profiles.get(profileId) !== entry ||
+      !entry.browser.headless ||
+      entry.syncing > 0 ||
+      entry.pages.size > 0
+    )
+      return;
+    await entry.browser.close();
+    if (this.profiles.get(profileId) === entry) this.forgetProfile(profileId);
+  }
+
+  requirePublicationContext(input: {
+    accountId: string;
+    profileId: string;
+    pageId: string;
+    publicationId: string;
+  }) {
+    const entry = this.profiles.get(input.profileId);
+    const page = entry?.pages.get(input.pageId);
+    if (
+      !entry ||
+      entry.accountId !== input.accountId ||
+      !page ||
+      page.purpose !== "publish" ||
+      page.publicationId !== input.publicationId ||
+      page.page.isClosed()
+    )
+      throw new Error("Publication browser ownership could not be verified");
+    return entry.browser.context;
   }
 
   async openForVerification(
@@ -638,7 +875,7 @@ export class PlaywrightBrowserSessionHost {
           if (entry.browser.headless && entry.syncing === 0) {
             await entry.browser.close();
             if (this.profiles.get(account.profileId) === entry)
-              this.profiles.delete(account.profileId);
+              this.forgetProfile(account.profileId);
           }
           throw error;
         }
@@ -650,16 +887,50 @@ export class PlaywrightBrowserSessionHost {
       },
     );
     const { entry, page } = acquired;
-    const dataClient = createPlaywrightPlatformDataClient(
+    const baseDataClient = createPlaywrightPlatformDataClient(
       entry.browser.context,
       page.page,
       platform.browser,
     );
+    // Factory is lazy: a missing signing asset is reported on the first API request,
+    // while close still owns and drains the helper before releasing the Profile.
+    let custom: ReturnType<OpenPlatformDataClient> | undefined;
+    try {
+      custom = this.openDataClient?.({
+        base: baseDataClient,
+        context: entry.browser.context,
+        account,
+        platform,
+        assertOwnership: () => {
+          if (
+            this.profiles.get(account.profileId) !== entry ||
+            entry.accountId !== account.id ||
+            entry.pages.get(page.id) !== page ||
+            page.page.isClosed()
+          )
+            throw new Error("Sync browser ownership could not be verified");
+        },
+      });
+    } catch (error) {
+      baseDataClient.dispose();
+      try {
+        await page.close();
+      } finally {
+        entry.pages.delete(page.id);
+        if (--entry.syncing === 0) entry.resolveIdle();
+        await this.withProfileTransition(account.profileId, () =>
+          this.closeIdleBackground(account.profileId, entry),
+        );
+      }
+      throw error;
+    }
+    const dataClient = custom?.dataClient ?? baseDataClient;
     let closing: Promise<void> | undefined;
     let released = false;
     const close = (): Promise<void> =>
       (closing ??= (async () => {
         dataClient.dispose();
+        await custom?.close();
         await page.close();
         entry.pages.delete(page.id);
         released = true;
@@ -668,11 +939,12 @@ export class PlaywrightBrowserSessionHost {
           if (
             this.profiles.get(account.profileId) === entry &&
             entry.browser.headless &&
-            entry.syncing === 0
+            entry.syncing === 0 &&
+            !this.hasPublication(entry)
           ) {
             await entry.browser.close();
             if (this.profiles.get(account.profileId) === entry)
-              this.profiles.delete(account.profileId);
+              this.forgetProfile(account.profileId);
           }
         });
       })().catch((error: unknown) => {
@@ -757,7 +1029,7 @@ export class PlaywrightBrowserSessionHost {
         throw new Error("账号仍有活动任务，暂不能关闭环境");
       await entry.browser.close();
       if (this.profiles.get(account.profileId) === entry)
-        this.profiles.delete(account.profileId);
+        this.forgetProfile(account.profileId);
     });
   }
   async remove(account: PlatformAccountSnapshot) {
@@ -769,7 +1041,7 @@ export class PlaywrightBrowserSessionHost {
       if (entry && (entry.syncing || this.hasPublication(entry)))
         throw new Error("账号仍有活动任务，暂不能删除环境");
       if (entry) await entry.browser.close();
-      this.profiles.delete(profileId);
+      this.forgetProfile(profileId);
       await this.dependencies.removeProfileDirectory(
         browserProfileDirectory(this.dependencies.profilesRoot(), profileId),
         { recursive: true, force: true },

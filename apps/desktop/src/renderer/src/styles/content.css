@@ -406,9 +406,13 @@ button.platform-content-row:hover:not(:disabled) {
   align-items: baseline;
   gap: 12px;
 }
-.publication-assets-details li span {
+.text-button.publication-asset-open {
   min-width: 0;
+  min-height: 0;
+  margin-top: 0;
   overflow-wrap: anywhere;
+  text-align: left;
+  font-size: inherit;
 }
 .publication-assets-details li small {
   flex: none;

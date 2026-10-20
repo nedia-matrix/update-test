@@ -1,3 +1,4 @@
+import { resolveAccountPlatform } from "@nedia-matrix/platform-sdk";
 import type { PublishResultEvent } from "@nedia-matrix/platform-sdk";
 import { Publication } from "../domain/index.js";
 
@@ -129,8 +130,9 @@ export class PublicationService implements PublicationUseCases {
       throw new TypeError(
         "The source account is unavailable; choose and verify an active account first",
       );
-    const platform = this.dependencies.platforms.require(
-      source.publication.platformId,
+    const platform = resolveAccountPlatform(
+      this.dependencies.platforms,
+      account,
     );
     const form = platform.publishing?.forms[source.contentForm];
     if (!form)

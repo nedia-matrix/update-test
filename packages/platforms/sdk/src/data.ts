@@ -153,3 +153,18 @@ export interface PlatformContentCapability {
     expectedExternalAccountId: string,
   ): Promise<PlatformContentReadResult>;
 }
+
+/** Structural contract survives independently bundled SDK copies. */
+export function isPlatformDataOperationError(
+  value: unknown,
+): value is PlatformDataOperationError {
+  if (typeof value !== "object" || value === null) return false;
+  const error = value as Record<string, unknown>;
+  return (
+    error.name === "PlatformDataOperationError" &&
+    typeof error.message === "string" &&
+    ["rate_limited", "request_failed", "scroll_failed"].includes(
+      String(error.code),
+    )
+  );
+}

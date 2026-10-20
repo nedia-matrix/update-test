@@ -25,7 +25,7 @@ export interface PlatformPublishAutomation {
   readonly submit: AutomationWorkflow;
 }
 
-export interface PlatformPublishFormCapability {
+export interface PlatformPublishFormBase {
   readonly constraints: PublishConstraints;
   readonly tagPolicy?: PublishTagPolicy;
   readonly submissionModes: readonly SubmissionMode[];
@@ -33,5 +33,14 @@ export interface PlatformPublishFormCapability {
     readonly parts: readonly ("title" | "body")[];
     readonly separator: string;
   };
+}
+export interface PlatformWorkflowFormCapability extends PlatformPublishFormBase {
+  readonly executionMode?: "workflow";
   readonly automation: PlatformPublishAutomation;
 }
+export interface PlatformPublisherFormCapability extends PlatformPublishFormBase {
+  readonly executionMode: "publisher";
+  readonly adapterId: string;
+}
+export type PlatformPublishFormCapability =
+  PlatformWorkflowFormCapability | PlatformPublisherFormCapability;

@@ -1,3 +1,9 @@
+import {
+  resolveAccountPlatform,
+  resolvePlatformSettings,
+  accountSubmissionMode,
+  type PlatformSettings,
+} from "@nedia-matrix/platform-sdk";
 import type { PreparePublishDraftRequest } from "./index.js";
 import {
   composePublishDescription,
@@ -27,17 +33,21 @@ export class PublishDraftOrchestrator {
 
   async prepareRemoteDraft(request: PrepareRemoteDraftRequest) {
     assertAccountId(request.accountId);
-    return prepareRemoteDraft(request, this.dependencies, (draft) =>
-      this.prepareDraft(draft),
+    return prepareRemoteDraft(request, this.dependencies, (draft, settings) =>
+      this.prepareDraft(draft, settings),
     );
   }
 
-  async prepareDraft(request: PreparePublishDraftRequest) {
+  async prepareDraft(
+    request: PreparePublishDraftRequest,
+    settingsSnapshot?: PlatformSettings,
+  ) {
     assertAccountId(request.accountId);
     validatePublishDraftRequest(request);
-    const submissionMode = request.submissionMode ?? "manual_confirmation";
     const requestId = request.requestId?.trim() ?? this.dependencies.createId();
     const account = this.dependencies.accounts.require(request.accountId);
+    let submissionMode =
+      request.submissionMode ?? accountSubmissionMode(account);
     const existingPublication = this.dependencies.publishing
       .list()
       .find((record) => record.requestId === requestId);
@@ -63,17 +73,13 @@ export class PublishDraftOrchestrator {
         const sourcePublication = request.sourcePublicationId
           ? this.requireRecreatableSource(request.sourcePublicationId, request)
           : undefined;
-        if (sourcePublication && submissionMode !== "manual_confirmation") {
-          throw new TypeError(
-            "Recreated drafts require manual confirmation before publishing",
-          );
-        }
         if (account.lifecycle !== "active") {
           return { kind: "account_unknown" } as const;
         }
         preflightStage = "platform_capability";
-        const platform = this.dependencies.platforms.require(
-          account.platformId,
+        const platform = resolveAccountPlatform(
+          this.dependencies.platforms,
+          account,
         );
         const form = platform.publishing?.forms[request.contentForm];
         if (!form) {
@@ -81,6 +87,35 @@ export class PublishDraftOrchestrator {
             `${platform.displayName} does not support this draft`,
           );
         }
+        const settings = resolvePlatformSettings(platform, {
+          ...(settingsSnapshot ?? account.settings),
+          ...(request.submissionMode
+            ? { submissionMode: request.submissionMode }
+            : {}),
+        });
+        submissionMode = accountSubmissionMode({ settings });
+        if (
+          sourcePublication &&
+          form.executionMode !== "publisher" &&
+          submissionMode !== "manual_confirmation"
+        ) {
+          throw new TypeError(
+            "Recreated drafts require manual confirmation before publishing",
+          );
+        }
+        if (form.executionMode === "publisher") {
+          if (
+            !this.dependencies.pluginPublishing ||
+            !this.dependencies.observations.attachDirect
+          )
+            throw new TypeError("publisher publishing adapter is unavailable");
+          if (request.tags?.length && !form.tagPolicy)
+            throw new TypeError("Publisher topics are not supported");
+        }
+        if (!form.submissionModes.includes(submissionMode))
+          throw new TypeError(
+            "Platform does not support the selected submission mode",
+          );
         const publishRuntime = platform.publishing;
         if (!publishRuntime) {
           throw new TypeError(
@@ -105,6 +140,7 @@ export class PublishDraftOrchestrator {
           preparedText,
           description,
           publishRuntime,
+          settings,
         } as const;
       } catch (error) {
         trace?.report({
@@ -141,6 +177,7 @@ export class PublishDraftOrchestrator {
       preparedText,
       description,
       publishRuntime,
+      settings,
     } = preflight;
     let acquiredLease: ReturnType<
       PublicationApplicationDependencies["accountPublications"]["acquire"]
@@ -197,18 +234,25 @@ export class PublishDraftOrchestrator {
     let publicationId: string | undefined;
     let opened: PublicationBrowserPage | undefined;
     try {
-      if (!platform.browser.sessionCapabilities?.headlessSync) {
-        await this.dependencies.browser.openUserPage(account, platform);
-      }
+      opened = await this.dependencies.browser.openForPublication(
+        account,
+        platform,
+        undefined,
+        trace,
+      );
+      trace?.bind({ pageId: opened.id });
       const verificationStartedAt = Date.now();
       trace?.report({
         component: "session",
         event: "session.detection.started",
         details: { phase: "publish_preflight" },
       });
-      const detected = await this.dependencies.verifyAccount({
-        accountId: account.id,
-      });
+      const detected = await this.dependencies.verifyAccount(
+        {
+          accountId: account.id,
+        },
+        opened,
+      );
       trace?.report({
         component: "session",
         event: "session.detection.completed",
@@ -258,7 +302,20 @@ export class PublishDraftOrchestrator {
         tags: preparedText.tags,
         submissionMode,
         assets: selection.files,
+        ...(platform.pluginSource
+          ? { pluginSource: platform.pluginSource }
+          : {}),
+        platformDisplay: {
+          name: platform.displayName,
+          allowedHostSuffixes: [...platform.browser.allowedHostSuffixes],
+        },
         rulesVersion: platform.rulesVersion,
+        settings,
+        executionMode:
+          form.executionMode === "publisher" ? "publisher" : "workflow",
+        ...(form.executionMode === "publisher"
+          ? { adapterId: form.adapterId }
+          : {}),
         qualification: {
           capability: form,
           body: preparedText.body,
@@ -287,16 +344,146 @@ export class PublishDraftOrchestrator {
           resolvedAt: new Date().toISOString(),
         });
       }
-      opened = await this.dependencies.browser.openForPublication(
-        account,
-        platform,
-        publication.publication.id,
-        trace,
-      );
-      trace?.bind({ pageId: opened.id });
+      opened.bindPublication(publication.publication.id);
+      if (form.executionMode === "publisher") {
+        const controller = new AbortController();
+        const direct = this.dependencies.observations.attachDirect!({
+          publicationId,
+          accountId: account.id,
+          platformId: platform.id,
+          onInterrupt: () => controller.abort(),
+        });
+        let session:
+          | Awaited<
+              ReturnType<
+                NonNullable<
+                  PublicationApplicationDependencies["pluginPublishing"]
+                >["open"]
+              >
+            >
+          | undefined;
+        let committed = false;
+        let failureStage = "插件发布会话初始化";
+        try {
+          session = await this.dependencies.pluginPublishing!.open({
+            account,
+            platform,
+            publicationId,
+            pageId: opened.id,
+            adapterId: form.adapterId,
+            settings,
+          });
+          failureStage = "素材准备";
+          await session.prepare(
+            {
+              title,
+              body: preparedText.body,
+              mediaReferences: selection.resourceReferences,
+              tags: preparedText.tags,
+            },
+            controller.signal,
+          );
+          this.dependencies.mediaSelections.consume(request.mediaSelectionId);
+          if (controller.signal.aborted)
+            throw new Error("API preparation cancelled");
+          if (
+            this.dependencies.publishing.get(publicationId)?.publication
+              .state !== "preparing"
+          )
+            throw new Error("API publication is no longer preparing");
+          failureStage = "提交前账号身份复核";
+          await opened.verifyIdentity();
+          const currentAccount = this.dependencies.accounts.require(account.id);
+          if (
+            currentAccount.platformId !== platform.id ||
+            currentAccount.profileId !== account.profileId ||
+            currentAccount.status !== "authenticated" ||
+            currentAccount.externalAccountId !== account.externalAccountId
+          )
+            throw new Error("API publication account identity changed");
+          failureStage = "提交或持久化边界";
+          const result = await session.submit({
+            signal: controller.signal,
+            beforeCommit: async () => {
+              if (committed || controller.signal.aborted)
+                throw new Error(
+                  "API submission is already committed or cancelled",
+                );
+              if (
+                this.dependencies.publishing.get(publicationId!)?.publication
+                  .state !== "preparing"
+              )
+                throw new Error("API publication is no longer preparing");
+              this.dependencies.publishing.markSubmitting(publicationId!);
+              await direct.persist({
+                kind: "submission_attempted",
+                source: "application_commit",
+                message: "即将发送接口发布请求",
+              });
+              committed = true;
+            },
+          });
+          if (!committed)
+            throw new Error(
+              "API adapter returned without a durable submission boundary",
+            );
+          const outcome =
+            controller.signal.aborted &&
+            result.kind !== "published" &&
+            result.kind !== "failed"
+              ? {
+                  kind: "uncertain" as const,
+                  message: "提交后已取消，平台结果未知",
+                }
+              : result;
+          await direct.persist(outcome);
+          trace?.finish({ outcome: outcome.kind });
+          return {
+            status: "submission_started" as const,
+            publicationId,
+            profileId: opened.profileId,
+            mediaCount: selection.resourceReferences.length,
+            publishObservationId: direct.id,
+          };
+        } catch {
+          const hasEvidence =
+            this.dependencies.publishing.get(publicationId)
+              ?.submissionEvidence !== "none";
+          if (committed || hasEvidence) {
+            await direct.persist({
+              kind: "uncertain",
+              message: "接口提交结果未知，请核实平台作品后处理",
+            });
+            return {
+              status: "uncertain" as const,
+              code: "SUBMISSION_RESULT_UNCERTAIN",
+              message: "接口提交结果未知，请核实平台作品后处理",
+              evidenceId: null,
+              publicationId,
+            };
+          }
+          if (controller.signal.aborted) {
+            await direct.persist({
+              kind: "cancelled",
+              message: "已取消素材准备，未发起笔记提交",
+            });
+            return { status: "cancelled" as const, message: "已取消素材准备" };
+          }
+          throw new Error(`接口${failureStage}失败，未确认发起发布`);
+        } finally {
+          try {
+            await session?.close();
+          } finally {
+            await direct.close();
+          }
+        }
+      }
+      if (publishRuntime.executionMode === "publisher")
+        throw new Error("Publishing execution mode mismatch");
       if (!opened.observationSession) throw new Error("发布页观察端口不可用");
       const publishPage = opened;
       const monitor = publishRuntime.createResultMonitor({
+        settings,
         contentForm: request.contentForm,
         submissionMode,
         session: opened.observationSession,
@@ -351,6 +538,7 @@ export class PublishDraftOrchestrator {
         form.automation.prepare,
         opened.driver,
         {
+          settings,
           mediaReferences: selection.resourceReferences,
           title,
           body,
@@ -420,7 +608,7 @@ export class PublishDraftOrchestrator {
       await this.dependencies.workflow.execute(
         form.automation.submit,
         opened.driver,
-        {},
+        { settings },
         {
           beforeCommit: ({ boundary }) =>
             boundary === "submission"
@@ -486,8 +674,11 @@ export class PublishDraftOrchestrator {
         : result;
     } finally {
       if (!observationOwnsLease) {
-        await opened?.release();
-        publicationLease.release();
+        try {
+          await opened?.release();
+        } finally {
+          publicationLease.release();
+        }
       }
     }
   }

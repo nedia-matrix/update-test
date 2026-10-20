@@ -91,7 +91,7 @@ async function launchPersistentBrowser(
   const sharedOptions: PersistentBrowserOptions = {
     headless,
     chromiumSandbox: true,
-    viewport: { width: runtime.width, height: runtime.height },
+    viewport: null,
     locale: runtime.locale,
     timezoneId: runtime.timezoneId,
     acceptDownloads: true,
@@ -132,11 +132,9 @@ async function launchPersistentBrowser(
         args: [
           "--disable-dev-shm-usage",
           "--disable-blink-features=AutomationControlled",
-          `--window-size=${runtime.width},${runtime.height}`,
           ...(runtime.provider === "fingerprint"
             ? fingerprintArguments(runtime.fingerprintSeed)
             : []),
-          // "--window-size=1680,930",
         ],
       });
     } catch (error) {

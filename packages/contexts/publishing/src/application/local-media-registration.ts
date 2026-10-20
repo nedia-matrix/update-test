@@ -1,3 +1,4 @@
+import { resolveAccountPlatform } from "@nedia-matrix/platform-sdk";
 import type { PublishContentForm } from "../domain/index.js";
 
 import type {
@@ -12,6 +13,9 @@ export interface LocalMediaResource {
   name: string;
   size: number;
   extension: string;
+  mediaType?: string;
+  hash?: string;
+  localRelativePath?: string;
 }
 
 export interface RegisterLocalMediaCommand {
@@ -47,7 +51,7 @@ export function registerLocalMedia(
     return { status: "login_required" };
   }
 
-  const platform = dependencies.platforms.require(account.platformId);
+  const platform = resolveAccountPlatform(dependencies.platforms, account);
   const form = platform.publishing?.forms[command.contentForm];
   if (!form) {
     throw new TypeError(
@@ -88,7 +92,15 @@ export function registerLocalMedia(
     throw new TypeError("Invalid local media resource");
   }
 
-  const files = command.resources.map(({ name, size }) => ({ name, size }));
+  const files = command.resources.map(
+    ({ name, size, mediaType, hash, localRelativePath }) => ({
+      name,
+      size,
+      ...(mediaType ? { mediaType } : {}),
+      ...(hash ? { hash } : {}),
+      ...(localRelativePath ? { localRelativePath } : {}),
+    }),
+  );
   const selectionId = dependencies.mediaSelections.create({
     accountId: account.id,
     contentForm: command.contentForm,

@@ -1,9 +1,9 @@
+import { initializeDesktopPlugins } from "../plugins/desktop-plugins.js";
 import { desktopPreferences } from "../preferences/desktop-preferences.js";
 import { registerPreferencesIpc } from "../preferences/register-preferences-ipc.js";
 import {
   assertUpdateSourceIdle,
   updateSourceChanged,
-  recordApplicationUpdateStartup,
 } from "../updates/electron-application-update.js";
 import { app, dialog } from "electron";
 
@@ -46,11 +46,18 @@ if (!hasSingleInstanceLock) {
 void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
   .then(async () => {
     if (!hasSingleInstanceLock) return;
-    registerPreferencesIpc(desktopPreferences(), {
-      assertIdle: assertUpdateSourceIdle,
-      changed: updateSourceChanged,
-    });
-    await recordApplicationUpdateStartup(false);
+    registerPreferencesIpc(
+      desktopPreferences(),
+      {
+        assertIdle: assertUpdateSourceIdle,
+        changed: updateSourceChanged,
+      },
+      () => {
+        if (!desktopRuntime) throw new Error("浏览器服务尚未就绪");
+        return desktopRuntime.assertFingerprintBrowserReady();
+      },
+    );
+    await initializeDesktopPlugins();
     desktopRuntime = new DesktopRuntime();
     desktopRuntime.start();
     const initialOpenUrl = findNediaMatrixOpenUrl(process.argv);

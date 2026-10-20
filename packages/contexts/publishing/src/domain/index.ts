@@ -1,5 +1,6 @@
 import {
   publishContentForms,
+  assertPlatformSettings,
   submissionModes,
   type PlatformPublishFormCapability,
 } from "@nedia-matrix/platform-sdk";
@@ -200,6 +201,12 @@ export interface PublicationAssetSnapshot {
 }
 
 export interface PublicationSnapshot {
+  pluginSource?: import("@nedia-matrix/platform-sdk").PlatformPluginSource;
+  platformDisplay?: { name: string; allowedHostSuffixes: readonly string[] };
+  executionMode?: "workflow" | "publisher";
+  settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
+  adapterId?: string;
+  originAccountId?: string;
   requestId: string;
   sourcePublicationId?: string;
   publication: Readonly<PublicationStateSnapshot>;
@@ -218,6 +225,11 @@ export interface PublicationSnapshot {
 }
 
 export interface PublicationStartInput {
+  pluginSource?: import("@nedia-matrix/platform-sdk").PlatformPluginSource;
+  platformDisplay?: { name: string; allowedHostSuffixes: readonly string[] };
+  executionMode?: "workflow" | "publisher";
+  settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
+  adapterId?: string;
   requestId: string;
   sourcePublicationId?: string;
   publicationId: string;
@@ -370,6 +382,9 @@ export class Publication {
     );
     return new Publication({
       requestId: input.requestId,
+      ...(input.executionMode ? { executionMode: input.executionMode } : {}),
+      ...(input.settings ? { settings: { ...input.settings } } : {}),
+      ...(input.adapterId ? { adapterId: input.adapterId } : {}),
       ...(input.sourcePublicationId
         ? { sourcePublicationId: input.sourcePublicationId }
         : {}),
@@ -382,6 +397,12 @@ export class Publication {
       lastObservationSequence: 0,
       retained: false,
       assets: input.assets,
+      ...(input.pluginSource
+        ? { pluginSource: { ...input.pluginSource } }
+        : {}),
+      ...(input.platformDisplay
+        ? { platformDisplay: structuredClone(input.platformDisplay) }
+        : {}),
       rulesVersion: input.rulesVersion,
       createdAt: input.occurredAt,
       updatedAt: input.occurredAt,
@@ -673,6 +694,30 @@ export function assertPublicationSnapshot(
     if (!snapshot || typeof snapshot !== "object") {
       throw new TypeError("Publication snapshot must be an object");
     }
+    if (snapshot.settings !== undefined) {
+      assertPlatformSettings(snapshot.settings);
+      if (snapshot.settings.submissionMode !== snapshot.submissionMode)
+        throw new TypeError("Task settings submission mode mismatch");
+    }
+    if (
+      snapshot.executionMode !== undefined &&
+      !["workflow", "publisher"].includes(snapshot.executionMode)
+    )
+      throw new TypeError("Invalid publication execution mode");
+    if (
+      snapshot.adapterId !== undefined &&
+      (snapshot.executionMode !== "publisher" ||
+        typeof snapshot.adapterId !== "string" ||
+        !snapshot.adapterId)
+    )
+      throw new TypeError("Invalid publication adapter");
+    if (
+      snapshot.originAccountId !== undefined &&
+      (typeof snapshot.originAccountId !== "string" ||
+        !snapshot.originAccountId)
+    )
+      throw new TypeError("Invalid publication origin account");
+
     for (const [name, value] of [
       ["request ID", snapshot.requestId],
       ["rules version", snapshot.rulesVersion],

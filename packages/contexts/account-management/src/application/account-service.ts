@@ -1,3 +1,11 @@
+import {
+  resolvePlatformSettings,
+  type PlatformSettings,
+} from "@nedia-matrix/platform-sdk";
+import {
+  resolveAccountPlatform,
+  samePlatform,
+} from "@nedia-matrix/platform-sdk";
 /// <reference lib="dom" />
 
 import {
@@ -19,6 +27,7 @@ import type {
   AccountDiagnosticPort,
   AccountDiagnosticTrace,
   BrowserSessionPort,
+  AccountBrowserPage,
   PlatformCatalog,
   SessionDetectionPort,
 } from "./account-ports.js";
@@ -85,6 +94,7 @@ export interface AccountServiceDependencies {
   browserSessions: BrowserSessionPort;
   removeAccountResources(account: PlatformAccountSnapshot): Promise<void>;
   isAccountBusy?(accountId: string): boolean;
+  assertAccountAvailable?(accountId: string): void;
   createId(): string;
   createProfileId(platformId: string, accountId: string): string;
   now?: (() => Date) | undefined;
@@ -166,7 +176,8 @@ export class AccountService {
       request.accountId,
       this.now(),
     );
-    this.assertAvailable(resolved.account.id);
+    if (this.deleting.has(resolved.account.id))
+      throw new Error("Account is being removed");
     return resolved;
   }
 
@@ -187,7 +198,11 @@ export class AccountService {
       .filter(
         (account) =>
           account.lifecycle === "active" &&
-          account.platformId === request.platformId &&
+          samePlatform(
+            this.dependencies.platforms,
+            account.platformId,
+            request.platformId,
+          ) &&
           account.externalAccountId === request.externalAccountId,
       );
     if (matches.length === 0) {
@@ -236,7 +251,11 @@ export class AccountService {
     if (
       !current ||
       current.lifecycle !== "active" ||
-      current.platformId !== request.platformId ||
+      !samePlatform(
+        this.dependencies.platforms,
+        current.platformId,
+        request.platformId,
+      ) ||
       current.externalAccountId !== request.externalAccountId
     ) {
       throw new PlatformAccountIdentityError(
@@ -252,25 +271,58 @@ export class AccountService {
     const platform = this.dependencies.platforms.require(request.platformId);
     const id = this.createId();
     const now = this.now().toISOString();
-    const account = PlatformAccount.createPending({
+    const aggregate = PlatformAccount.createPending({
       id,
       platformId: platform.id,
       profileId: this.dependencies.createProfileId(platform.id, id),
       platformDisplayName: platform.displayName,
       occurredAt: now,
-    }).toSnapshot();
+    });
+    aggregate.setSettings(resolvePlatformSettings(platform), now);
+    const account = aggregate.toSnapshot();
     this.dependencies.accountStore.put(account);
     this.dependencies.onAccountsChanged?.();
     return toPlatformAccountView(account);
+  }
+
+  setSettings(request: {
+    accountId: string;
+    settings: PlatformSettings;
+  }): PlatformAccountView {
+    assertAccountRequest(request);
+    this.assertAvailable(request.accountId);
+    const { account } = this.resolveAccount(request);
+    this.assertAvailable(account.id);
+    if (
+      this.dependencies.isAccountBusy?.(account.id) ||
+      this.verificationTransitions.has(account.id)
+    )
+      throw new Error("账号正在发布或同步，暂不能修改平台设置");
+    const platform = this.dependencies.platforms.require(account.platformId);
+    if (!request.settings) throw new TypeError("请选择平台设置");
+    const settings = resolvePlatformSettings(platform, {
+      ...account.settings,
+      ...request.settings,
+    });
+    this.cancelAutomaticRecognition(account.id);
+    const aggregate = PlatformAccount.rehydrate(account);
+    aggregate.setSettings(settings, this.now().toISOString());
+    this.dependencies.accountStore.put(aggregate.toSnapshot());
+    this.dependencies.onAccountsChanged?.();
+    return toPlatformAccountView(aggregate.toSnapshot());
   }
 
   async openLogin(request: OpenPlatformLoginRequest) {
     assertLoginRequest(request);
     this.assertAvailable(request.accountId);
     const { account } = this.resolveAccount(request);
+    this.assertAvailable(account.id);
     if (this.dependencies.isAccountBusy?.(account.id))
       throw new Error("账号正在发布，请结束任务后再登录");
-    const platform = this.dependencies.platforms.require(account.platformId);
+    const platform = resolveAccountPlatform(
+      this.dependencies.platforms,
+      account,
+    );
     const loginEntry = platform.accounts.loginEntries.find(
       (entry) => entry.id === request.loginEntryId,
     );
@@ -304,7 +356,11 @@ export class AccountService {
     assertAccountRequest(request);
     this.assertAvailable(request.accountId);
     const { account } = this.resolveAccount(request);
-    const platform = this.dependencies.platforms.require(account.platformId);
+    this.assertAvailable(account.id);
+    const platform = resolveAccountPlatform(
+      this.dependencies.platforms,
+      account,
+    );
     const loginEntry = platform.accounts.loginEntries[0];
     const trace = this.startDiagnosticTrace(
       "account.browser_open",
@@ -346,10 +402,14 @@ export class AccountService {
     assertAccountRequest(request);
     this.assertAvailable(request.accountId);
     const { account } = this.resolveAccount(request);
+    this.assertAvailable(account.id);
     if (account.lifecycle !== "active" || account.externalAccountId === null) {
       throw new Error("请先完成平台账号登录识别");
     }
-    const platform = this.dependencies.platforms.require(account.platformId);
+    const platform = resolveAccountPlatform(
+      this.dependencies.platforms,
+      account,
+    );
     const trace = this.startDiagnosticTrace(
       "account.profile_refresh",
       account.id,
@@ -472,6 +532,13 @@ export class AccountService {
     return this.detectAccount(request, false);
   }
 
+  async verifyAccountOnPage(
+    request: PlatformAccountRequest,
+    page: Pick<AccountBrowserPage, "driver" | "sessionProbeClient">,
+  ) {
+    return this.detectAccount(request, false, page);
+  }
+
   async removeAccount(request: PlatformAccountRequest) {
     assertAccountRequest(request);
     this.assertAvailable(request.accountId);
@@ -486,7 +553,6 @@ export class AccountService {
       throw new AccountReplacedError(resolved.account.id);
     }
     const account = resolved.account;
-    this.dependencies.platforms.require(account.platformId);
     this.deleting.add(account.id);
     try {
       await this.dependencies.removeAccountResources(account);
@@ -503,13 +569,18 @@ export class AccountService {
   private async detectAccount(
     request: PlatformAccountRequest,
     allowIdentityChange: boolean,
+    page?: Pick<AccountBrowserPage, "driver" | "sessionProbeClient">,
   ): Promise<SessionDetection> {
     assertAccountRequest(request);
     this.assertAvailable(request.accountId);
     this.cancelAutomaticRecognition(request.accountId);
     const { account } = this.resolveAccount(request);
+    this.assertAvailable(account.id);
     this.cancelAutomaticRecognition(account.id);
-    const platform = this.dependencies.platforms.require(account.platformId);
+    const platform = resolveAccountPlatform(
+      this.dependencies.platforms,
+      account,
+    );
     const trace = this.startDiagnosticTrace(
       "account.verify",
       account.id,
@@ -526,12 +597,14 @@ export class AccountService {
       const detected: SessionDetection = await this.withVerificationTransition(
         account.id,
         async () => {
-          const verification =
-            await this.dependencies.browserSessions.openForVerification(
-              account,
-              platform,
-              trace,
-            );
+          const ownedVerification = page
+            ? undefined
+            : await this.dependencies.browserSessions.openForVerification(
+                account,
+                platform,
+                trace,
+              );
+          const verification = page ?? ownedVerification!;
           try {
             return await this.sessionDetector(
               platform.accounts.detection,
@@ -539,7 +612,7 @@ export class AccountService {
               verification.sessionProbeClient,
             );
           } finally {
-            await verification.close();
+            await ownedVerification?.close();
           }
         },
       ).catch((error: unknown): SessionDetection => {
@@ -872,7 +945,16 @@ export class AccountService {
     this.recognitionTokens.delete(accountId);
   }
 
+  hasActiveOperation(accountId: string): boolean {
+    return (
+      this.deleting.has(accountId) ||
+      this.verificationTransitions.has(accountId) ||
+      this.recognitionTokens.has(accountId)
+    );
+  }
+
   private assertAvailable(accountId: string): void {
+    this.dependencies.assertAccountAvailable?.(accountId);
     if (this.deleting.has(accountId))
       throw new Error("Account is being removed");
   }

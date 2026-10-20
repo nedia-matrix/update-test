@@ -9,6 +9,7 @@ import type {
 export interface PlatformAccountView {
   readonly id: string;
   readonly platformId: string;
+  readonly settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
   readonly profileId: string;
   readonly lifecycle: PlatformAccountSnapshot["lifecycle"];
   readonly displayName: string;
@@ -30,6 +31,7 @@ export function toPlatformAccountView(
   return {
     id: snapshot.id,
     platformId: snapshot.platformId,
+    ...(snapshot.settings ? { settings: { ...snapshot.settings } } : {}),
     profileId: snapshot.profileId,
     lifecycle: snapshot.lifecycle,
     displayName: snapshot.displayName,
@@ -83,7 +85,14 @@ export type DetectPlatformSessionResult =
     }
   | { status: "unknown"; reason: string };
 
+export interface SetAccountSettingsRequest {
+  accountId: string;
+  settings: import("@nedia-matrix/platform-sdk").PlatformSettings;
+}
 export interface AccountUseCases {
+  setSettings?(
+    request: SetAccountSettingsRequest,
+  ): Promise<PlatformAccountView>;
   list(): PlatformAccountView[];
   resolve(request: PlatformAccountRequest): ResolvedPlatformAccount;
   resolveByExternalIdentity(request: {

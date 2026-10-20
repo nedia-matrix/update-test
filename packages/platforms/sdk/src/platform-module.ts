@@ -2,9 +2,14 @@ import type { SessionDetectionPlan } from "@nedia-matrix/automation-engine";
 import { z } from "zod";
 
 import type {
-  PlatformPublishFormCapability,
   PublishContentForm,
+  PlatformWorkflowFormCapability,
+  PlatformPublisherFormCapability,
 } from "./publishing.js";
+import {
+  validateSettingDefinitions,
+  platformSettingsDefinitions,
+} from "./settings.js";
 import { publishConstraintsSchema } from "./publishing.js";
 import type { PlatformPublishRuntime } from "./runtime.js";
 import type {
@@ -34,6 +39,7 @@ export interface PlatformBrowserPolicy {
     readonly isolatedPages: boolean;
     readonly parallelSync: boolean;
     readonly headlessSync: boolean;
+    readonly headlessPublish?: boolean;
   };
   readonly startUrl: string;
   readonly allowedHostSuffixes: readonly string[];
@@ -46,15 +52,29 @@ export interface PlatformAccountsCapability {
   readonly detection: SessionDetectionPlan;
 }
 
-export interface PlatformPublishingCapability {
+interface PlatformPublishingBase {
   readonly implementationStatus: PlatformImplementationStatus;
+}
+export interface PlatformWorkflowPublishingCapability extends PlatformPublishingBase {
+  readonly executionMode?: "workflow";
   readonly forms: Readonly<
-    Partial<Record<PublishContentForm, PlatformPublishFormCapability>>
+    Partial<Record<PublishContentForm, PlatformWorkflowFormCapability>>
   >;
   createResultMonitor: PlatformPublishRuntime["createResultMonitor"];
 }
+export interface PlatformPublisherCapability extends PlatformPublishingBase {
+  readonly executionMode: "publisher";
+  readonly forms: Readonly<
+    Partial<Record<PublishContentForm, PlatformPublisherFormCapability>>
+  >;
+}
+export type PlatformPublishingCapability =
+  PlatformWorkflowPublishingCapability | PlatformPublisherCapability;
 
 export interface PlatformModule {
+  readonly settings?: import("./settings.js").PlatformSettingDefinitions;
+  readonly iconUrl?: string;
+  readonly pluginSource?: import("./plugin.js").PlatformPluginSource;
   readonly id: string;
   readonly displayName: string;
   readonly rulesVersion: string;
@@ -113,6 +133,7 @@ function assertAllowedUrl(
 
 function workflowUrls(module: PlatformModule): readonly [string, string][] {
   const result: [string, string][] = [];
+  if (module.publishing?.executionMode === "publisher") return result;
   for (const [formName, form] of Object.entries(
     module.publishing?.forms ?? {},
   )) {
@@ -129,12 +150,13 @@ function workflowUrls(module: PlatformModule): readonly [string, string][] {
   return result;
 }
 
-export function definePlatformModule(module: PlatformModule): PlatformModule {
+export function definePlatformModule<T extends PlatformModule>(module: T): T {
   if (module.browser.sessionCapabilities) {
     z.object({
       isolatedPages: z.boolean(),
       parallelSync: z.boolean(),
       headlessSync: z.boolean(),
+      headlessPublish: z.boolean().optional(),
     })
       .strict()
       .parse(module.browser.sessionCapabilities);
@@ -165,6 +187,16 @@ export function definePlatformModule(module: PlatformModule): PlatformModule {
     module.accounts.duplicateProfileReplacement,
   );
   if (module.publishing) {
+    if (
+      module.publishing.executionMode !== undefined &&
+      !["workflow", "publisher"].includes(module.publishing.executionMode)
+    )
+      throw new TypeError("Unsupported publishing execution mode");
+    if (
+      module.publishing.executionMode === "publisher" &&
+      "createResultMonitor" in module.publishing
+    )
+      throw new TypeError("publisher must not define a browser result monitor");
     platformImplementationStatusSchema.parse(
       module.publishing.implementationStatus,
     );
@@ -176,7 +208,67 @@ export function definePlatformModule(module: PlatformModule): PlatformModule {
     for (const form of Object.values(module.publishing.forms)) {
       if (!form) continue;
       publishConstraintsSchema.parse(form.constraints);
+      if (module.publishing.executionMode === "publisher") {
+        if (
+          form.executionMode !== "publisher" ||
+          !("adapterId" in form) ||
+          typeof form.adapterId !== "string" ||
+          !form.adapterId.trim() ||
+          "automation" in form
+        )
+          throw new TypeError(
+            "publisher forms require an adapter and cannot contain browser automation",
+          );
+      } else if (
+        (form.executionMode !== undefined &&
+          form.executionMode !== "workflow") ||
+        "adapterId" in form ||
+        !("automation" in form) ||
+        !form.automation?.prepare ||
+        !form.automation?.submit
+      ) {
+        throw new TypeError(
+          "browser forms require prepare and submit automation",
+        );
+      }
     }
+  }
+
+  if (module.settings !== undefined)
+    validateSettingDefinitions(module.settings);
+  const settings = platformSettingsDefinitions(module);
+  validateSettingDefinitions(settings);
+  for (const form of Object.values(module.publishing?.forms ?? {})) {
+    if (
+      !form ||
+      !Array.isArray(form.submissionModes) ||
+      !form.submissionModes.length ||
+      new Set(form.submissionModes).size !== form.submissionModes.length ||
+      form.submissionModes.some(
+        (mode: unknown) =>
+          typeof mode !== "string" ||
+          !["automatic", "manual_confirmation"].includes(mode),
+      )
+    )
+      throw new TypeError("Invalid submission modes");
+    const values =
+      settings.submissionMode?.options.map((option) => option.value) ?? [];
+    if (form.submissionModes.some((mode: string) => !values.includes(mode)))
+      throw new TypeError("Submission settings omit a supported form mode");
+  }
+  if (settings.submissionMode) {
+    const modes = new Set(
+      Object.values(module.publishing?.forms ?? {}).flatMap(
+        (form) => form?.submissionModes ?? [],
+      ),
+    );
+    if (
+      settings.submissionMode.options.some(
+        (option) =>
+          !modes.has(option.value as import("./publishing.js").SubmissionMode),
+      )
+    )
+      throw new TypeError("Submission settings contain an unsupported mode");
   }
 
   assertAllowedUrl(module, "browser.startUrl", module.browser.startUrl);

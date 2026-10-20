@@ -47,9 +47,17 @@ export function installationContext(): InstallContext {
     currentVersion: app.getVersion(),
   };
 }
-export const recordApplicationUpdateStartup = (completed: boolean) =>
+export const recordApplicationUpdateStartup = (
+  completed: boolean,
+  stagePlugins?: () => void,
+) =>
   app.isPackaged
-    ? recordUpdateStartup(installationContext(), completed)
+    ? recordUpdateStartup(
+        installationContext(),
+        completed,
+        (file) => shell.trashItem(file),
+        stagePlugins,
+      )
     : Promise.resolve();
 export const installApplicationUpdate = () => updates().install();
 
@@ -92,7 +100,14 @@ function updates(): UpdateController {
           let prepared: PreparedInstallation | undefined;
           let cleanupStarted = false;
           try {
-            prepared = await prepareInstallation(installationContext(), update);
+            prepared = await prepareInstallation(
+              {
+                ...installationContext(),
+                includePlugins:
+                  desktopPreferences().get().updates.includePlugins,
+              },
+              update,
+            );
             cleanupStarted = true;
             installing();
             await installationLifecycle.finish(prepared);

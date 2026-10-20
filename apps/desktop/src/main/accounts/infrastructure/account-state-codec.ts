@@ -204,7 +204,9 @@ function parseRetiredProfile(value: unknown): RetiredBrowserProfile | null {
     typeof candidate.retiredAt !== "string" ||
     typeof candidate.removeAfter !== "string" ||
     (candidate.reason !== "replaced_after_duplicate_login" &&
-      candidate.reason !== "account_deleted")
+      candidate.reason !== "account_deleted" &&
+      candidate.reason !== "browser_switched" &&
+      candidate.reason !== "browser_switch_cancelled")
   ) {
     return null;
   }

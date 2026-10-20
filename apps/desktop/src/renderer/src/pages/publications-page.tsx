@@ -1,3 +1,4 @@
+import { samePlatformId, isPlatformAvailable } from "../shared.js";
 import type {
   PublicationTaskSummary,
   PublicationStatus,
@@ -5,7 +6,7 @@ import type {
 import type { PlatformContentSnapshot } from "@nedia-matrix/platform-content";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
-import type { DiagnosticTraceRecord } from "../../../bridge/contracts.js";
+import { useDiagnosticTimeline } from "../hooks/use-diagnostic-timeline.js";
 
 import type { AppContext } from "../app-context.js";
 import { Icon } from "../components/icons.js";
@@ -397,14 +398,21 @@ function PublicationRow({
   const [loadingWorks, setLoadingWorks] = useState(false);
   const [busy, setBusy] = useState(false);
   const [traceId, setTraceId] = useState<string | null | undefined>(undefined);
-  const [traceRecords, setTraceRecords] = useState<
-    readonly DiagnosticTraceRecord[] | null
-  >(null);
-  const [moreTraceRecords, setMoreTraceRecords] = useState(false);
+  const {
+    records: traceRecords,
+    setRecords: setTraceRecords,
+    more: moreTraceRecords,
+    setMore: setMoreTraceRecords,
+    error: traceError,
+  } = useDiagnosticTimeline(traceId, diagnosticsExpanded);
   const [loadingMoreTraceRecords, setLoadingMoreTraceRecords] = useState(false);
   const account = accounts.find(({ id }) => id === publication.accountId);
   const platform = context.platforms.find(
     ({ id }) => id === publication.platformId,
+  );
+  const platformAvailable = isPlatformAvailable(
+    context.platforms,
+    publication.platformId,
   );
   const displayGroup = publication.effectiveDisplayGroup;
   const showWorkDetails = Boolean(
@@ -467,7 +475,7 @@ function PublicationRow({
             items.filter(
               (item) =>
                 item.accountId === publication.accountId &&
-                item.platformId === publication.platformId,
+                samePlatformId(item.platformId, publication.platformId),
             ),
           );
       })
@@ -499,25 +507,12 @@ function PublicationRow({
     let active = true;
     void window.matrix
       .findDiagnosticTrace({ publicationId: publication.id })
-      .then(async (result) => {
-        if (!active) return;
-        const id = result?.traceId ?? null;
-        setTraceId(id);
-        if (id) {
-          const records = await window.matrix.readDiagnosticTrace({
-            traceId: id,
-            limit: 500,
-          });
-          if (active) {
-            setTraceRecords(records);
-            setMoreTraceRecords(records.length === 500);
-          }
-        }
+      .then((result) => {
+        if (active) setTraceId(result?.traceId ?? null);
       })
       .catch(() => {
         if (active) {
           setTraceId(null);
-          setTraceRecords(null);
         }
       });
     return () => {
@@ -699,6 +694,7 @@ function PublicationRow({
     quick?: boolean;
     primary?: boolean;
     destructive?: boolean;
+    disabled?: boolean;
     run(): void | Promise<void>;
   }> = [
     {
@@ -715,6 +711,7 @@ function PublicationRow({
     },
     {
       label: "打开作品",
+      disabled: !platformAvailable,
       visible:
         displayGroup === "completed" &&
         Boolean(
@@ -748,6 +745,7 @@ function PublicationRow({
     },
     {
       label: "前往平台核实",
+      disabled: !platformAvailable,
       visible: unresolved && Boolean(account),
       primary: true,
       run: () => runAction("verify"),
@@ -786,6 +784,7 @@ function PublicationRow({
     },
     {
       label: "打开平台快照作品",
+      disabled: !platformAvailable,
       visible:
         displayGroup === "completed" &&
         Boolean(
@@ -798,6 +797,7 @@ function PublicationRow({
     },
     {
       label: "前往平台账号",
+      disabled: !platformAvailable,
       visible:
         displayGroup === "completed" &&
         Boolean(
@@ -874,7 +874,10 @@ function PublicationRow({
                 class="secondary-button small-button"
                 type="button"
                 key={action.label}
-                disabled={busy}
+                disabled={busy || action.disabled}
+                title={
+                  action.disabled ? "平台插件不可用，无法执行此操作" : undefined
+                }
                 onClick={() => void action.run()}
               >
                 {action.label}
@@ -934,7 +937,12 @@ function PublicationRow({
                   class={`${action.primary ? "" : "secondary-button "}small-button${action.destructive ? " publication-delete-action" : ""}`}
                   type="button"
                   key={action.label}
-                  disabled={busy}
+                  disabled={busy || action.disabled}
+                  title={
+                    action.disabled
+                      ? "平台插件不可用，无法执行此操作"
+                      : undefined
+                  }
                   onClick={() => void action.run()}
                 >
                   {action.label}
@@ -1003,9 +1011,11 @@ function PublicationRow({
                             accountId: publication.accountId,
                           });
                         setWorkOptions(
-                          items.filter(
-                            (item) =>
-                              item.platformId === publication.platformId,
+                          items.filter((item) =>
+                            samePlatformId(
+                              item.platformId,
+                              publication.platformId,
+                            ),
                           ),
                         );
                       } catch (error) {
@@ -1059,13 +1069,21 @@ function PublicationRow({
                   </dd>
                 </div>
                 <div>
+                  <dt>执行插件</dt>
+                  <dd>
+                    {publication.pluginSource
+                      ? `${publication.pluginSource.pluginId} · ${publication.pluginSource.pluginVersion}`
+                      : "未知（历史记录）"}
+                  </dd>
                   <dt>规则版本</dt>
                   <dd>{publication.rulesVersion}</dd>
                 </div>
-                <div>
-                  <dt>标签</dt>
-                  <dd>{publication.tags?.join("、") || "无"}</dd>
-                </div>
+                {Boolean(publication.tags?.length) && (
+                  <div>
+                    <dt>标签</dt>
+                    <dd>{publication.tags?.join("、")}</dd>
+                  </div>
+                )}
                 <div>
                   <dt>素材</dt>
                   <dd>
@@ -1083,7 +1101,26 @@ function PublicationRow({
                         <ul>
                           {publication.assets.map((asset, index) => (
                             <li key={index}>
-                              <span>{asset.name}</span>
+                              <button
+                                class="text-button publication-asset-open"
+                                type="button"
+                                title="用系统默认应用打开素材"
+                                onClick={async () => {
+                                  try {
+                                    await window.matrix.openPublicationAsset({
+                                      publicationId: publication.id,
+                                      assetIndex: index,
+                                    });
+                                  } catch (error) {
+                                    context.setStatus(
+                                      errorMessage(error, "打开素材文件失败"),
+                                      "error",
+                                    );
+                                  }
+                                }}
+                              >
+                                {asset.name}
+                              </button>
                               <small>{formatBytes(asset.size)}</small>
                             </li>
                           ))}
@@ -1213,7 +1250,8 @@ function PublicationRow({
                       </button>
                     </div>
                   )}
-                  {traceId && traceRecords === null && (
+                  {traceError && <p role="alert">{traceError}</p>}
+                  {traceId && traceRecords === null && !traceError && (
                     <p>正在读取诊断时间线…</p>
                   )}
                   {traceRecords && (

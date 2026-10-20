@@ -1,17 +1,14 @@
 import type { PlatformModule } from "@nedia-matrix/platform-sdk";
-import { douyinPlatformModule } from "@nedia-matrix/platform-douyin";
-import { kuaishouPlatformModule } from "@nedia-matrix/platform-kuaishou";
-import { xiaohongshuPlatformModule } from "@nedia-matrix/platform-xiaohongshu";
 import { toPlatformSummary } from "./platform-summary.js";
 import type { PlatformSummary } from "../../bridge/contracts.js";
 
-const registeredModules: PlatformModule[] = [
-  douyinPlatformModule,
-  xiaohongshuPlatformModule,
-  kuaishouPlatformModule,
-];
-
 export interface PlatformRegistry {
+  unavailable?(): readonly {
+    id: string;
+    displayName: string;
+    iconUrl?: string;
+    reason: string;
+  }[];
   get(id: string): PlatformModule | undefined;
   require(id: string): PlatformModule;
   list(): readonly PlatformModule[];
@@ -52,10 +49,30 @@ export function createPlatformRegistry(
 
 export interface PlatformCatalogHost extends PlatformRegistry {
   replace(modules: readonly PlatformModule[]): void;
+  setUnavailable(
+    items: readonly {
+      id: string;
+      displayName: string;
+      iconUrl?: string;
+      reason: string;
+    }[],
+  ): void;
 }
 
 class DesktopPlatformCatalogHost implements PlatformCatalogHost {
   private snapshot: PlatformRegistry;
+  private missing: readonly {
+    id: string;
+    displayName: string;
+    iconUrl?: string;
+    reason: string;
+  }[] = [];
+  unavailable() {
+    return this.missing;
+  }
+  setUnavailable(items: typeof this.missing) {
+    this.missing = items;
+  }
 
   constructor(modules: readonly PlatformModule[]) {
     this.snapshot = createPlatformRegistry(modules);
@@ -66,6 +83,8 @@ class DesktopPlatformCatalogHost implements PlatformCatalogHost {
   }
 
   require(id: string): PlatformModule {
+    const reason = this.missing.find((item) => item.id === id)?.reason;
+    if (reason) throw new TypeError(`平台不可用：${reason}`);
     return this.snapshot.require(id);
   }
 
@@ -86,10 +105,28 @@ export function createPlatformCatalogHost(
 }
 
 export const desktopPlatformCatalog: PlatformCatalogHost =
-  createPlatformCatalogHost(registeredModules);
+  createPlatformCatalogHost([]);
 
 export const desktopPlatformRegistry: PlatformRegistry = desktopPlatformCatalog;
 
+export function platformSummaries(
+  catalog: PlatformRegistry,
+): PlatformSummary[] {
+  return [
+    ...catalog.list().map(toPlatformSummary),
+    ...(catalog.unavailable?.() ?? []).map((item) => ({
+      id: item.id,
+      displayName: item.displayName,
+      iconUrl: item.iconUrl,
+      unavailableReason: item.reason,
+      entryUrl: "",
+      rulesVersion: "",
+      implementationStatus: "route-only" as const,
+      loginEntries: [],
+      publishCapabilities: [],
+    })),
+  ];
+}
 export function desktopPlatformSummaries(): PlatformSummary[] {
-  return desktopPlatformCatalog.list().map(toPlatformSummary);
+  return platformSummaries(desktopPlatformCatalog);
 }

@@ -23,6 +23,7 @@ export {
 export interface PlatformAccountSnapshot {
   id: string;
   platformId: string;
+  readonly settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
   profileId: string;
   lifecycle: PlatformAccountLifecycle;
   displayName: string;
@@ -56,7 +57,11 @@ export interface RetiredBrowserProfile {
   survivingAccountId: string;
   retiredAt: string;
   removeAfter: string;
-  reason: "replaced_after_duplicate_login" | "account_deleted";
+  reason:
+    | "replaced_after_duplicate_login"
+    | "account_deleted"
+    | "browser_switched"
+    | "browser_switch_cancelled";
 }
 
 export {

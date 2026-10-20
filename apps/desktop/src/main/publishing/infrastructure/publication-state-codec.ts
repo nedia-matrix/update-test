@@ -120,6 +120,24 @@ function parsePublicationSnapshot(value: unknown): PublicationSnapshot | null {
   ) {
     return null;
   }
+  if (
+    value.pluginSource !== undefined &&
+    (!isRecord(value.pluginSource) ||
+      typeof value.pluginSource.pluginId !== "string" ||
+      typeof value.pluginSource.pluginVersion !== "string" ||
+      typeof value.pluginSource.packageDigest !== "string")
+  )
+    return null;
+  if (
+    value.platformDisplay !== undefined &&
+    (!isRecord(value.platformDisplay) ||
+      typeof value.platformDisplay.name !== "string" ||
+      !Array.isArray(value.platformDisplay.allowedHostSuffixes) ||
+      !value.platformDisplay.allowedHostSuffixes.every(
+        (host) => typeof host === "string",
+      ))
+  )
+    return null;
   const contentForm = value.contentForm as PublicationSnapshot["contentForm"];
   const tags = value.tags === undefined ? [] : value.tags;
   const submissionMode =

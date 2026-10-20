@@ -1,3 +1,4 @@
+import { resolveAccountPlatform } from "@nedia-matrix/platform-sdk";
 import type { PlatformSessionDetection } from "@nedia-matrix/automation-engine";
 import {
   PlatformAccount,
@@ -64,7 +65,10 @@ export class AccountIdentityService {
         (account.identityScheme !== null &&
           detected.identityScheme !== account.identityScheme))
     ) {
-      const platform = this.dependencies.platforms.require(account.platformId);
+      const platform = resolveAccountPlatform(
+        this.dependencies.platforms,
+        account,
+      );
       const mismatch: SessionDetection = {
         status: "unknown",
         reason: `当前登录的${platform.displayName}账号与本地记录不一致，请切回原账号或刷新账号信息后重试`,
@@ -156,8 +160,9 @@ export class AccountIdentityService {
         };
       }
 
-      const platform = this.dependencies.platforms.require(
-        candidate.platformId,
+      const platform = resolveAccountPlatform(
+        this.dependencies.platforms,
+        candidate,
       );
       if (platform.accounts.duplicateProfileReplacement !== "enabled") {
         return {

@@ -21,6 +21,11 @@ export type PublicationAssetSnapshot = CorePublicationAssetSnapshot;
 export type PublicationSnapshot = DomainPublicationSnapshot;
 
 export interface PublicationSummary {
+  pluginSource?: import("@nedia-matrix/platform-sdk").PlatformPluginSource;
+  platformName?: string;
+  executionMode?: "workflow" | "publisher";
+  settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
+  adapterId?: string;
   id: string;
   requestId: string;
   sourcePublicationId?: string;
@@ -214,6 +219,7 @@ export type PreparePublishDraftResult =
       publicationId: string;
       state: PublicationStatus;
     }
+  | { status: "cancelled"; message: string }
   | { status: "account_busy" }
   | { status: "login_required" }
   | { status: "account_unknown"; reason: string }
@@ -252,6 +258,9 @@ export function toPublicationSummary(
   const { publication, contentRevision } = record;
   return {
     id: publication.id,
+    ...(record.executionMode ? { executionMode: record.executionMode } : {}),
+    ...(record.settings ? { settings: { ...record.settings } } : {}),
+    ...(record.adapterId ? { adapterId: record.adapterId } : {}),
     requestId: record.requestId,
     ...(record.sourcePublicationId
       ? { sourcePublicationId: record.sourcePublicationId }
@@ -268,6 +277,12 @@ export function toPublicationSummary(
       ...transition,
       reason: transition.reason ?? null,
     })),
+    ...(record.pluginSource
+      ? { pluginSource: { ...record.pluginSource } }
+      : {}),
+    ...(record.platformDisplay
+      ? { platformName: record.platformDisplay.name }
+      : {}),
     rulesVersion: record.rulesVersion,
     retained: record.retained,
     createdAt: record.createdAt,
@@ -286,6 +301,11 @@ export interface PublicationRepository {
 }
 
 export interface StartPublicationInput {
+  pluginSource?: import("@nedia-matrix/platform-sdk").PlatformPluginSource;
+  platformDisplay?: { name: string; allowedHostSuffixes: readonly string[] };
+  executionMode?: "workflow" | "publisher";
+  settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
+  adapterId?: string;
   requestId: string;
   sourcePublicationId?: string;
   platformId: string;
@@ -355,6 +375,10 @@ export class PublishingService {
       localRelativePath: asset.localRelativePath ?? null,
     }));
     const record = Publication.start({
+      ...(input.pluginSource ? { pluginSource: input.pluginSource } : {}),
+      ...(input.platformDisplay
+        ? { platformDisplay: input.platformDisplay }
+        : {}),
       requestId: input.requestId,
       ...(input.sourcePublicationId
         ? { sourcePublicationId: input.sourcePublicationId }
@@ -370,6 +394,9 @@ export class PublishingService {
       submissionMode: input.submissionMode ?? "manual_confirmation",
       assets,
       rulesVersion: input.rulesVersion,
+      ...(input.executionMode ? { executionMode: input.executionMode } : {}),
+      ...(input.settings ? { settings: { ...input.settings } } : {}),
+      ...(input.adapterId ? { adapterId: input.adapterId } : {}),
       occurredAt,
       qualification: input.qualification,
     }).toSnapshot();

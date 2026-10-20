@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { publicationSnapshot } from "./metadata-validation.js";
 import type { DesktopMetadataDatabase } from "./desktop-metadata-database.js";
 
-export const metadataSchemaVersion = 5;
+export const metadataSchemaVersion = 7;
 
 export interface MetadataMigrationObserver {
   report(event: string, details?: Readonly<Record<string, unknown>>): void;
@@ -222,6 +222,53 @@ export function migrateMetadataSchema(
     });
     version = 5;
     observer?.report("persistence.sqlite.migration_completed", { version });
+  }
+  if (version === 5) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v6",
+      version: 6,
+    });
+    if (existed)
+      database.backup(`${database.filename}.before-v6-${randomUUID()}.sqlite`);
+    database.transaction(() => {
+      sql.exec(`
+        CREATE TABLE account_browser_switches (
+          id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL,
+          candidate_profile_id TEXT NOT NULL UNIQUE,
+          phase TEXT NOT NULL CHECK(phase IN ('preparing', 'awaiting_login', 'committed', 'cancelled')),
+          record TEXT NOT NULL CHECK(json_valid(record))
+        ) STRICT;
+        CREATE UNIQUE INDEX account_browser_switch_pending ON account_browser_switches(account_id)
+          WHERE phase IN ('preparing', 'awaiting_login');
+        PRAGMA user_version=6;
+      `);
+      sql
+        .prepare("INSERT INTO schema_migrations VALUES (6, ?, ?)")
+        .run(
+          "Add recoverable targeted account browser switches",
+          new Date().toISOString(),
+        );
+    });
+    version = 6;
+    observer?.report("persistence.sqlite.migration_completed", { version: 6 });
+  }
+  if (version === 6) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v7",
+      version: 7,
+    });
+    if (existed)
+      database.backup(`${database.filename}.before-v7-${randomUUID()}.sqlite`);
+    database.transaction(() => {
+      sql.exec(
+        `CREATE TABLE account_platform_merges (merged_account_id TEXT PRIMARY KEY, surviving_account_id TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record))) STRICT; PRAGMA user_version=7;`,
+      );
+      sql
+        .prepare("INSERT INTO schema_migrations VALUES (7, ?, ?)")
+        .run("Add account merge decision records", new Date().toISOString());
+    });
+    observer?.report("persistence.sqlite.migration_completed", { version: 7 });
   }
 }
 

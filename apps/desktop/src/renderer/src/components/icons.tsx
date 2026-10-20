@@ -4,6 +4,7 @@ export type IconName =
   | "accounts"
   | "add"
   | "arrow-up-right"
+  | "browser"
   | "check"
   | "chevron-down"
   | "close"
@@ -32,6 +33,13 @@ const paths: Record<IconName, JSX.Element> = {
   "arrow-up-right": (
     <>
       <path d="M7 17 17 7M7 7h10v10" />
+    </>
+  ),
+  browser: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 8.5h8.3M15.03 13.75l-4.15 7.15M8.97 13.75 4.82 6.6" />
     </>
   ),
   check: <path d="m5 12 4 4L19 6" />,

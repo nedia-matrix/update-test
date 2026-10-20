@@ -96,6 +96,22 @@ export function platformFor(
   return platforms.find((platform) => platform.id === platformId);
 }
 
+export function isPlatformAvailable(
+  platforms: readonly PlatformSummary[],
+  platformId: string,
+): boolean {
+  const platform = platformFor(platforms, platformId);
+  return platform !== undefined && !platform.unavailableReason;
+}
+
+export function platformForAccount(
+  platforms: readonly PlatformSummary[],
+  account?: Pick<PlatformAccountView, "platformId">,
+): PlatformSummary | undefined {
+  if (!account) return;
+  return platformFor(platforms, account.platformId);
+}
+
 export function accountLabel(
   account: PlatformAccountView,
   platforms: readonly PlatformSummary[],
@@ -113,4 +129,8 @@ export function accountStatus(account: PlatformAccountView): string {
     case "unknown":
       return "待确认";
   }
+}
+
+export function samePlatformId(left: string, right: string): boolean {
+  return left === right;
 }

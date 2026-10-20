@@ -1,3 +1,4 @@
+import type { AccountPlatformCatalog } from "@nedia-matrix/platform-sdk";
 import type {
   AutomationDriver,
   PlatformSessionDetection,
@@ -21,7 +22,7 @@ import type {
   ResolvedPlatformAccount,
 } from "./account-types.js";
 
-export interface PlatformCatalog {
+export interface PlatformCatalog extends AccountPlatformCatalog {
   get(id: string): PlatformModule | undefined;
   require(id: string): PlatformModule;
   list(): readonly PlatformModule[];
@@ -90,6 +91,7 @@ export interface AccountDiagnosticPort {
       | "account.verify"
       | "account.profile_refresh"
       | "account.browser_open"
+      | "account.browser_switch"
       | "profile.cleanup";
     accountId?: string;
     platformId?: string;

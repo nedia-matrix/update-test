@@ -1,6 +1,7 @@
 import type { PlatformAccountView } from "@nedia-matrix/account-management";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
+import type { ApplicationUpdateState } from "../../bridge/contracts.js";
 import type { AppContext, AppStatus } from "./app-context.js";
 import { GlobalStatus } from "./components/global-status.js";
 import { Icon, type IconName } from "./components/icons.js";
@@ -10,6 +11,9 @@ import { PublishingPage } from "./pages/publishing-page.js";
 import { SettingsPage } from "./pages/settings-page.js";
 import { accountStatus, platformFor } from "./shared.js";
 import { applyTheme, resolveTheme, type ThemePreference } from "./theme.js";
+
+import type { AccountBrowserRuntime } from "../../bridge/account-browser-runtime.js";
+import { AccountBrowserStatus } from "./components/account-browser-status.js";
 
 interface RouteDefinition {
   path: string;
@@ -56,6 +60,35 @@ export function App({
     context.accounts,
   );
   const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [browserRuntimes, setBrowserRuntimes] = useState<
+    AccountBrowserRuntime[] | null
+  >(null);
+  const browserStatus = (accountId: string) =>
+    browserRuntimes === null
+      ? ("unknown" as const)
+      : (browserRuntimes.find((runtime) => runtime.accountId === accountId)
+          ?.mode ?? ("stopped" as const));
+
+  useEffect(() => {
+    let active = true;
+    let receivedEvent = false;
+    const stop = window.matrix.onAccountBrowserRuntimesChanged((runtimes) => {
+      receivedEvent = true;
+      if (active) setBrowserRuntimes(runtimes);
+    });
+    void window.matrix
+      .listAccountBrowserRuntimes()
+      .then((runtimes) => {
+        if (active && !receivedEvent) setBrowserRuntimes(runtimes);
+      })
+      .catch(() => {
+        /* Keep unknown until the next lifecycle notification. */
+      });
+    return () => {
+      active = false;
+      stop();
+    };
+  }, []);
   const [selectedAccountId, setSelectedAccountId] = useState(
     () => globalThis.localStorage.getItem(selectedAccountStorageKey) ?? "",
   );
@@ -76,6 +109,8 @@ export function App({
   });
   const [runtimeActionPending, setRuntimeActionPending] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [applicationUpdate, setApplicationUpdate] =
+    useState<ApplicationUpdateState | null>(null);
 
   const route = useMemo(
     () => routes.find(({ path }) => path === routePath) ?? routes[0]!,
@@ -205,8 +240,24 @@ export function App({
   };
 
   useEffect(() => {
-    // Main retains the result even while the settings page is unmounted.
+    let active = true;
+    const accept = (next: ApplicationUpdateState) => {
+      if (active) {
+        setApplicationUpdate((previous) =>
+          !previous || next.revision >= previous.revision ? next : previous,
+        );
+      }
+    };
+    const unsubscribe = window.matrix.onApplicationUpdateChanged(accept);
+    void window.matrix
+      .getApplicationUpdateState()
+      .then(accept)
+      .catch(() => undefined);
     void window.matrix.checkForApplicationUpdate().catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   const updateAccounts = (
@@ -254,10 +305,17 @@ export function App({
                     globalThis.location.hash = "/accounts";
                   }}
                 >
-                  <PlatformIcon
-                    platformId={account.platformId}
-                    platformName={platform?.displayName ?? account.platformId}
-                  />
+                  <span class="sidebar-account-avatar">
+                    <PlatformIcon
+                      iconUrl={platform?.iconUrl}
+                      platformName={platform?.displayName ?? account.platformId}
+                    />
+                    <AccountBrowserStatus
+                      status={browserStatus(account.id)}
+                      runningOnly
+                      compact
+                    />
+                  </span>
                   <span class="sidebar-account-copy">
                     <strong>{accountName}</strong>
                     <small>
@@ -289,9 +347,22 @@ export function App({
           </nav>
 
           <footer class="sidebar-status-bar">
-            <span class="sidebar-version" title="应用版本">
-              {runtime.version ? `v${runtime.version}` : "v—"}
-            </span>
+            <div class="sidebar-version">
+              <span class="sidebar-version-number" title="应用版本">
+                {runtime.version ? `v${runtime.version}` : "v—"}
+              </span>
+              {applicationUpdate?.latestVersion && (
+                <a
+                  class="sidebar-update-badge"
+                  href="#/settings"
+                  title={`发现新版本 v${applicationUpdate.latestVersion}，点击查看软件更新`}
+                  aria-label={`发现新版本 v${applicationUpdate.latestVersion}，查看软件更新`}
+                >
+                  <span class="sidebar-update-dot" aria-hidden="true" />
+                  新版本
+                </a>
+              )}
+            </div>
             <nav class="primary-navigation" aria-label="全局功能">
               {routes.slice(1).map((item) => (
                 <NavigationLink item={item} active={item.path === route.path} />
@@ -311,6 +382,9 @@ export function App({
             <AccountsPage
               context={context}
               account={selectedAccount}
+              browserStatus={
+                selectedAccount ? browserStatus(selectedAccount.id) : "unknown"
+              }
               onAccountsChanged={updateAccounts}
             />
           ) : route.path === "/publish" ? (

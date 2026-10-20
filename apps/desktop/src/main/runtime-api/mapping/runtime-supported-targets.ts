@@ -6,7 +6,7 @@ export function runtimeSupportedTargets(
 ): LocalRuntimeHandshake["supportedTargets"] {
   return platforms.flatMap((platform) =>
     platform.publishCapabilities
-      .filter((form) => form.submissionModes.includes("manual_confirmation"))
+      .filter((form) => form.submissionModes.length > 0)
       .map((form) => ({
         platform: platform.id,
         contentForm:

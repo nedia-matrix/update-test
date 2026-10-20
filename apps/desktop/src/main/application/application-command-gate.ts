@@ -3,6 +3,10 @@ export class ApplicationCommandGate {
   private stopping = false;
   private readonly active = new Set<Promise<unknown>>();
 
+  assertRunning(): void {
+    if (this.stopping) throw new Error("Desktop is shutting down");
+  }
+
   guard<T extends object>(useCases: T): T {
     return new Proxy(useCases, {
       get: (target, key, receiver) => {

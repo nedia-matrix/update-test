@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import type {
+  ApplicationTechnicalInformation,
   DiagnosticAttachment,
   DiagnosticTraceRecord,
   DiagnosticTraceReference,
@@ -22,6 +23,7 @@ import {
 } from "../diagnostic-attachment-reader.js";
 
 interface DiagnosticIpcDependencies {
+  getTechnicalInformation(): Promise<ApplicationTechnicalInformation>;
   readonly logDirectory: string;
   readonly evidenceDirectories: readonly string[];
   findTraceForPublication(publicationId: string): Promise<string | null>;
@@ -35,6 +37,9 @@ interface DiagnosticIpcDependencies {
 export function registerDiagnosticIpc(
   dependencies: DiagnosticIpcDependencies,
 ): void {
+  ipcMain.handle(ipcChannels.getTechnicalInformation, () =>
+    dependencies.getTechnicalInformation(),
+  );
   ipcMain.handle(ipcChannels.openDiagnosticDirectory, async () => {
     await mkdir(dependencies.logDirectory, { recursive: true });
     const error = await shell.openPath(dependencies.logDirectory);

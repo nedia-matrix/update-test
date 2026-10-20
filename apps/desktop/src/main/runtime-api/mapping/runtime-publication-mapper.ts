@@ -17,14 +17,7 @@ export function parseRuntimePublicationRequest(
   value: Record<string, unknown>,
 ): RuntimePublicationRequest {
   const target = requireRecord(value.target, "target");
-  if (
-    value.submissionMode !== undefined ||
-    target.submissionMode !== undefined
-  ) {
-    throw new TypeError(
-      "Local Runtime does not accept submissionMode; publications require human confirmation",
-    );
-  }
+  // External execution and submission hints are ignored; Desktop owns the policy.
   const content = requireRecord(value.content, "content");
   const requestId = requireString(value.requestId, "requestId");
   if (!/^[A-Za-z0-9._~-]{1,128}$/.test(requestId)) {
