@@ -52,6 +52,19 @@ export function AccountsPage({
 
   useEffect(() => setActiveTab("overview"), [account?.id]);
 
+  useEffect(
+    () =>
+      window.matrix.onPlatformContentSyncProgress((progress) => {
+        if (progress.accountId === account?.id && progress.running) {
+          context.setStatus(
+            `正在同步作品：已保存 ${progress.pagesRead} 页、${progress.itemsRead} 条`,
+            "busy",
+          );
+        }
+      }),
+    [account?.id, context],
+  );
+
   if (!account) {
     return (
       <section class="empty-workspace account-empty-workspace">
@@ -131,12 +144,17 @@ export function AccountsPage({
   };
 
   return (
-    <div class="account-workspace">
+    <div
+      class={`account-workspace${platform?.unavailableReason ? " has-plugin-notice" : ""}`}
+    >
       {platform?.unavailableReason && (
-        <p class="runtime-settings-error" role="status">
-          {platform.unavailableReason}
-          。账号和历史已保留，请在设置中管理平台插件。
-        </p>
+        <div class="account-plugin-status" role="status">
+          <span class="status-indicator" aria-hidden="true" />
+          <span class="global-status-message" tabIndex={0}>
+            {platform.unavailableReason}
+            。账号和历史已保留，请在设置中管理平台插件。
+          </span>
+        </div>
       )}
       <header class="workspace-header account-profile-header">
         <AccountAvatar account={account} accountName={accountName} large />

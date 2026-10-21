@@ -1,7 +1,7 @@
-.global-status {
+.global-status,
+.account-plugin-status {
   position: fixed;
   right: 0;
-  bottom: 0;
   left: var(--sidebar-width);
   z-index: 50;
   display: flex;
@@ -9,11 +9,23 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  border-top: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-secondary);
   font-size: 0.75rem;
   line-height: 20px;
+}
+.global-status {
+  bottom: 0;
+  border-top: 1px solid var(--border);
+}
+.account-plugin-status {
+  top: 0;
+  border-bottom: 1px solid var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.account-plugin-status .status-indicator {
+  background: var(--danger);
 }
 .global-status-message {
   flex: 1;

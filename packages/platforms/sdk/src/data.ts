@@ -139,6 +139,7 @@ export interface PlatformContentData {
 
 export interface PlatformContentReadResult {
   readonly items: readonly PlatformContentData[];
+  /** True only after reading the entire account inventory, never just a filtered or partial page set. */
   readonly complete: boolean;
   readonly pagesRead: number;
   readonly remoteTotal?: number;
@@ -151,6 +152,14 @@ export interface PlatformContentCapability {
   read(
     client: PlatformDataClient,
     expectedExternalAccountId: string,
+    options?: {
+      /** Await persistence before requesting the next page. Items are this page only. */
+      readonly onPage?: (page: {
+        readonly items: readonly PlatformContentData[];
+        readonly pagesRead: number;
+        readonly remoteTotal?: number;
+      }) => Promise<void>;
+    },
   ): Promise<PlatformContentReadResult>;
 }
 

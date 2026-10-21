@@ -16,8 +16,11 @@ export function registerPlatformContentIpcHandlers(
     latestRun:
       application.platformContents.latestRun(request.accountId) ?? null,
   }));
-  ipcMain.handle(ipcChannels.refreshPlatformContents, (_event, request) =>
-    application.platformContents.refresh(request.accountId),
+  ipcMain.handle(ipcChannels.refreshPlatformContents, (event, request) =>
+    application.platformContents.refresh(request.accountId, (progress) => {
+      if (!event.sender.isDestroyed())
+        event.sender.send(ipcChannels.platformContentSyncProgress, progress);
+    }),
   );
   ipcMain.handle(ipcChannels.openPlatformContent, async (_event, request) =>
     shell.openExternal(

@@ -163,10 +163,10 @@
 .platform-content-row {
   display: grid;
   grid-template-columns:
-    minmax(220px, 1.35fr) minmax(72px, 0.38fr) minmax(200px, 1fr)
-    minmax(88px, 0.48fr) minmax(150px, 0.75fr);
+    minmax(180px, 1.35fr) minmax(64px, 0.38fr) minmax(164px, 1fr)
+    minmax(130px, 0.75fr);
   align-items: center;
-  column-gap: 16px;
+  column-gap: 12px;
 }
 .platform-content-heading {
   min-height: 34px;
@@ -220,7 +220,6 @@ button.platform-content-row:hover:not(:disabled) {
   font-size: 0.7rem;
 }
 .platform-content-metrics small,
-.platform-content-status,
 .platform-content-type {
   color: var(--text-tertiary);
   font-size: 0.61rem;

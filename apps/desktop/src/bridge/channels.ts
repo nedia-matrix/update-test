@@ -1,5 +1,7 @@
 export const ipcChannels = {
   listPlugins: "plugins:list",
+  listBundledPlugins: "plugins:bundled:list",
+  installBundledPlugin: "plugins:bundled:install",
   installPlugin: "plugins:install",
   changePlugin: "plugins:change",
   setAccountSettings: "matrix:accounts:settings",
@@ -25,6 +27,7 @@ export const ipcChannels = {
   removePlatformAccount: "matrix:accounts:remove",
   platformAccountsChanged: "matrix:accounts:changed",
   listPlatformContents: "matrix:platform-contents:list",
+  platformContentSyncProgress: "matrix:platform-contents:progress",
   refreshPlatformContents: "matrix:platform-contents:refresh",
   openPlatformContent: "matrix:platform-contents:open",
   selectPublishMedia: "matrix:publish:select-media",

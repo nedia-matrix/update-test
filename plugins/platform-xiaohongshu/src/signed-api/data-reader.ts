@@ -137,13 +137,15 @@ export function parseXhsContentPage(body: unknown): {
           : typeof item.permission_code === "number"
             ? String(item.permission_code)
             : undefined,
-      metrics: {
-        viewCount: count(item.view_count),
-        likeCount: count(item.likes),
-        commentCount: count(item.comments_count),
-        shareCount: count(item.shared_count),
-        collectCount: count(item.collected_count),
-      },
+      metrics: Object.fromEntries(
+        Object.entries({
+          viewCount: count(item.view_count),
+          likeCount: count(item.likes),
+          commentCount: count(item.comments_count),
+          shareCount: count(item.shared_count),
+          collectCount: count(item.collected_count),
+        }).filter(([, value]) => value !== undefined),
+      ),
     };
   });
   const tag = Array.isArray(page.tags)
@@ -183,6 +185,7 @@ export const xhsContentCapability: PlatformContentCapability = {
   async read(
     client,
     expectedExternalAccountId,
+    options?: Parameters<PlatformContentCapability["read"]>[2],
   ): Promise<PlatformContentReadResult> {
     verifyXhsIdentity(
       await request(client, xhsIdentityEndpoint),
@@ -218,6 +221,11 @@ export const xhsContentCapability: PlatformContentCapability = {
       remoteTotal = parsed.total ?? remoteTotal;
       const previousSize = items.size;
       for (const item of parsed.items) items.set(item.externalContentId, item);
+      await options?.onPage?.({
+        items: parsed.items,
+        pagesRead,
+        ...(remoteTotal === undefined ? {} : { remoteTotal }),
+      });
       if (remoteTotal !== undefined && items.size >= remoteTotal)
         return finish(true);
       if (!parsed.items.length)

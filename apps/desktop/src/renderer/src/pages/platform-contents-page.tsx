@@ -1,6 +1,7 @@
 import type {
   PlatformContentSnapshot,
   PlatformContentSyncRun,
+  PlatformContentSyncProgress,
 } from "@nedia-matrix/platform-content";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
@@ -34,6 +35,9 @@ export function PlatformContentsPage({
   const [data, setData] = useState<ContentState>(emptyState);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [progress, setProgress] = useState<PlatformContentSyncProgress | null>(
+    null,
+  );
 
   useEffect(() => {
     let active = true;
@@ -96,6 +100,34 @@ export function PlatformContentsPage({
       active = false;
     };
   }, [accountId, context, refreshToken]);
+
+  useEffect(() => {
+    let active = true;
+    let revision = 0;
+    let lastRefresh = 0;
+    setProgress(null);
+    const unsubscribe = window.matrix.onPlatformContentSyncProgress((next) => {
+      if (next.accountId !== accountId) return;
+      setProgress(next.running ? next : null);
+      if (
+        next.running &&
+        (next.pagesRead === 0 || Date.now() - lastRefresh < 1_000)
+      )
+        return;
+      lastRefresh = Date.now();
+      const current = ++revision;
+      void window.matrix
+        .listPlatformContents({ accountId })
+        .then((result) => {
+          if (active && revision === current) setData(result);
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [accountId]);
 
   const account = useMemo(
     () => accounts.find(({ id }) => id === accountId),
@@ -188,13 +220,24 @@ export function PlatformContentsPage({
               显示最近一次手动同步保存的作品和指标，共 {data.items.length} 条。
             </p>
           </div>
-          {data.latestRun && <SyncRunStatus run={data.latestRun} />}
+          {progress ? (
+            <div class="sync-run-status" role="status">
+              <strong>正在同步作品…</strong>
+              <small>
+                已保存 {progress.pagesRead} 页 · {progress.itemsRead} 条
+                {progress.remoteTotal === null
+                  ? ""
+                  : ` / 共 ${progress.remoteTotal} 条`}
+              </small>
+            </div>
+          ) : (
+            data.latestRun && <SyncRunStatus run={data.latestRun} />
+          )}
         </header>
         <div class="platform-content-heading" aria-hidden="true">
           <span>作品</span>
           <span>内容类型</span>
           <span>指标</span>
-          <span>平台状态</span>
           <span>数据时间</span>
         </div>
         <div class="content-list" aria-live="polite">
@@ -287,9 +330,6 @@ function PlatformContentRow({
         <Metric label="评论" value={content.metrics.commentCount} />
         <Metric label="收藏" value={content.metrics.collectCount} />
       </div>
-      <span class="platform-content-status">
-        {content.platformStatus ?? "—"}
-      </span>
       <div class="content-time-cell">
         <strong>
           {content.publishedAt ? formatTime(content.publishedAt) : "—"}

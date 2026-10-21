@@ -14,3 +14,10 @@ export interface PlatformPluginChange {
   id: string;
   action: "enable" | "disable" | "remove";
 }
+export interface BundledPlatformPlugin {
+  id: string;
+  displayName: string;
+  version: string;
+  iconUrl?: string;
+  matchesInstalled: boolean;
+}

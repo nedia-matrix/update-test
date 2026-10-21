@@ -1,5 +1,7 @@
 import {
   accountSubmissionMode,
+  normalizePublishBody,
+  preparePublishText,
   resolveAccountPlatform,
   resolvePlatformSettings,
   type PlatformSettings,
@@ -65,6 +67,14 @@ export async function prepareRemoteDraft<Result>(
   const orderedAssets = validateRemoteAssetsForForm(
     request.contentForm,
     request.assets,
+  );
+
+  // Reject invalid text before fetching remote media. prepareDraft validates
+  // again against the platform capability used for the actual publication.
+  preparePublishText(
+    form,
+    normalizePublishBody(form, request.body.trim()),
+    request.tags,
   );
 
   const downloaded = await dependencies.remoteAssets.download(

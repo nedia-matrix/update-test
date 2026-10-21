@@ -7,6 +7,7 @@ import type {
 } from "@nedia-matrix/publishing";
 import {
   accountSubmissionMode as resolveAccountSubmissionMode,
+  collectPublishTags,
   preparePublishText,
 } from "@nedia-matrix/platform-sdk";
 import type { PlatformSummary } from "../../../bridge/contracts.js";
@@ -133,6 +134,7 @@ export function PublishPage({
     [platform],
   );
   const requestedTags = useMemo(() => parseTags(tags), [tags]);
+  const totalTagCount = collectPublishTags(body, requestedTags).length;
   const preparedBody = capability
     ? preparePublishText(
         {
@@ -152,7 +154,7 @@ export function PublishPage({
   const bodyFeedback = textConstraintFeedback(capability, "body", preparedBody);
   const tagLimitExceeded =
     capability?.tagPolicy?.maxCount !== undefined &&
-    requestedTags.length > capability.tagPolicy.maxCount;
+    totalTagCount > capability.tagPolicy.maxCount;
   const mediaLimitExceeded =
     mediaSelection !== undefined &&
     capability?.constraints.mediaMaxCount !== undefined &&
@@ -695,7 +697,7 @@ export function PublishPage({
                 <label class="field-label" for="draft-tags">
                   话题标签
                   <span class={tagLimitExceeded ? "publish-error" : undefined}>
-                    {requestedTags.length}
+                    {totalTagCount}
                     {capability?.tagPolicy?.maxCount
                       ? ` / ${capability.tagPolicy.maxCount}`
                       : ""}{" "}
@@ -722,8 +724,8 @@ export function PublishPage({
                   }
                 >
                   {tagLimitExceeded
-                    ? `当前平台最多支持 ${capability?.tagPolicy?.maxCount} 个标签`
-                    : "用逗号或换行分隔，标签会随正文一起发布。"}
+                    ? `正文与独立标签合计 ${totalTagCount} 个话题，当前平台最多支持 ${capability?.tagPolicy?.maxCount} 个，请减少话题。`
+                    : "用逗号或换行分隔；计数包含正文内话题，相同话题只计一次。"}
                 </small>
               </div>
             </section>

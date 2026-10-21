@@ -58,7 +58,6 @@ export function parseDouyinAccountProfile(
   return {
     description,
     followerCount,
-    contentCount: count(user.aweme_count),
     followingCount,
     likeCount,
   };
@@ -136,14 +135,27 @@ export function parseDouyinContentPage(
   if (!root || (root.status_code !== undefined && root.status_code !== 0)) {
     throw new Error("抖音作品列表响应失败");
   }
-  const source = Array.isArray(root.aweme_list) ? root.aweme_list : [];
-  const items = source.flatMap((value) => {
+  if (!Array.isArray(root.aweme_list)) {
+    throw new Error("抖音作品列表响应缺少 aweme_list");
+  }
+  const hasMore =
+    root.has_more === true || root.has_more === 1 || root.has_more === "1"
+      ? true
+      : root.has_more === false || root.has_more === 0 || root.has_more === "0"
+        ? false
+        : undefined;
+  if (hasMore === undefined) {
+    throw new Error("抖音作品列表响应缺少有效的 has_more 分页标记");
+  }
+  const source = root.aweme_list;
+  const items = source.map((value) => {
     const parsed = parseContent(value, expectedExternalAccountId);
-    return parsed ? [parsed] : [];
+    if (!parsed) throw new Error("抖音作品列表包含缺少有效作品 ID 的记录");
+    return parsed;
   });
   return {
     items,
-    hasMore: root.has_more === true,
+    hasMore,
     ...(text(root.max_cursor) ? { nextCursor: text(root.max_cursor) } : {}),
     ...(count(root.total) !== undefined ? { total: count(root.total) } : {}),
   };

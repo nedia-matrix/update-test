@@ -39,6 +39,7 @@ export const douyinRequestedContentCapability: PlatformContentCapability = {
   async read(
     client,
     expectedExternalAccountId,
+    options?: Parameters<PlatformContentCapability["read"]>[2],
   ): Promise<PlatformContentReadResult> {
     await client.navigate(CONTENT_PAGE_URL);
 
@@ -96,17 +97,35 @@ export const douyinRequestedContentCapability: PlatformContentCapability = {
         items.set(item.externalContentId, item);
       }
       remoteTotal = parsed.total ?? remoteTotal;
+      await options?.onPage?.({
+        items: parsed.items,
+        pagesRead,
+        ...(remoteTotal === undefined ? {} : { remoteTotal }),
+      });
 
-      if (
-        !parsed.hasMore ||
-        (remoteTotal !== undefined && items.size >= remoteTotal)
-      ) {
+      if (!parsed.hasMore) {
+        if (remoteTotal !== undefined && items.size < remoteTotal) {
+          return partialResult(
+            items,
+            pagesRead,
+            remoteTotal,
+            `抖音已返回末页，但读取到的 ${items.size} 条作品少于平台总数 ${remoteTotal}，请重新同步`,
+          );
+        }
         return {
           items: [...items.values()],
           complete: true,
           pagesRead,
           ...(remoteTotal === undefined ? {} : { remoteTotal }),
         };
+      }
+      if (parsed.items.length === 0) {
+        return partialResult(
+          items,
+          pagesRead,
+          remoteTotal,
+          "抖音返回空页但仍声明有下一页，已停止同步",
+        );
       }
       if (!parsed.nextCursor) {
         return partialResult(

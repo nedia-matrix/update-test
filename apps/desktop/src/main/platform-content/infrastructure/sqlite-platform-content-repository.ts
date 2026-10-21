@@ -95,9 +95,28 @@ export class SqlitePlatformContentRepository implements PlatformContentRepositor
   saveAll(
     contents: readonly PlatformContentSnapshot[],
     run: PlatformContentSyncRun,
+    completeExternalContentIds?: readonly string[],
   ): void {
     const operation = () => {
       const parsedRun = parseRun(run);
+      if (completeExternalContentIds !== undefined) {
+        const inventory = new Set(completeExternalContentIds);
+        if (
+          parsedRun.status !== "completed" ||
+          parsedRun.pagesRead < 1 ||
+          completeExternalContentIds.some(
+            (id) => typeof id !== "string" || !id.trim(),
+          ) ||
+          inventory.size !== parsedRun.itemsRead ||
+          (parsedRun.remoteTotal !== null &&
+            parsedRun.itemsRead < parsedRun.remoteTotal) ||
+          contents.some((content) => !inventory.has(content.externalContentId))
+        ) {
+          throw new Error(
+            "Cannot reconcile an incomplete platform content inventory",
+          );
+        }
+      }
       const statement = this.database.connection.prepare(`
         INSERT INTO platform_contents VALUES (?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
@@ -116,6 +135,16 @@ export class SqlitePlatformContentRepository implements PlatformContentRepositor
           parsed.externalContentId,
           JSON.stringify(parsed),
         );
+      }
+      if (completeExternalContentIds !== undefined) {
+        this.database.connection
+          .prepare(
+            `
+          DELETE FROM platform_contents
+          WHERE account_id=? AND external_content_id NOT IN (SELECT value FROM json_each(?))
+        `,
+          )
+          .run(parsedRun.accountId, JSON.stringify(completeExternalContentIds));
       }
       this.writeRun(parsedRun);
     };

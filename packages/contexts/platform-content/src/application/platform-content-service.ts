@@ -15,6 +15,15 @@ import {
 
 export type PlatformContentSyncStatus = "completed" | "partial" | "failed";
 
+export interface PlatformContentSyncProgress {
+  readonly accountId: string;
+  readonly runId: string;
+  readonly running: boolean;
+  readonly pagesRead: number;
+  readonly itemsRead: number;
+  readonly remoteTotal: number | null;
+}
+
 export interface PlatformContentSyncRun {
   readonly id: string;
   readonly accountId: string;
@@ -40,6 +49,8 @@ export interface PlatformContentRepository {
   saveAll(
     contents: readonly PlatformContentSnapshot[],
     run: PlatformContentSyncRun,
+    /** Full remote inventory; atomically remove absent snapshots only for completed runs. */
+    completeExternalContentIds?: readonly string[],
   ): void;
   saveRun(run: PlatformContentSyncRun): void;
   latestRun(accountId: string): PlatformContentSyncRun | undefined;
@@ -114,6 +125,11 @@ export interface PlatformContentAutomationDiagnosticPort {
 export class PlatformContentService {
   private readonly syncing = new Map<string, Promise<PlatformContentSyncRun>>();
 
+  private readonly progressListeners = new Map<
+    string,
+    Set<(progress: PlatformContentSyncProgress) => void>
+  >();
+
   constructor(
     private readonly dependencies: PlatformContentServiceDependencies,
   ) {}
@@ -165,13 +181,23 @@ export class PlatformContentService {
     return content.contentUrl;
   }
 
-  refresh(accountId: string): Promise<PlatformContentSyncRun> {
+  refresh(
+    accountId: string,
+    onProgress?: (progress: PlatformContentSyncProgress) => void,
+  ): Promise<PlatformContentSyncRun> {
     assertAccountId(accountId);
+    if (onProgress) {
+      const listeners = this.progressListeners.get(accountId) ?? new Set();
+      listeners.add(onProgress);
+      this.progressListeners.set(accountId, listeners);
+    }
     const active = this.syncing.get(accountId);
     if (active) return active;
     const operation = this.run(accountId).finally(() => {
-      if (this.syncing.get(accountId) === operation)
+      if (this.syncing.get(accountId) === operation) {
         this.syncing.delete(accountId);
+        this.progressListeners.delete(accountId);
+      }
     });
     this.syncing.set(accountId, operation);
     return operation;
@@ -183,6 +209,25 @@ export class PlatformContentService {
     const startedAt = this.dependencies.now().toISOString();
     const runId = this.dependencies.createId();
     let trace: PlatformContentAutomationDiagnosticTrace | undefined;
+    let checkpoint: PlatformContentSyncRun | undefined;
+    const savedIds = new Set<string>();
+    const notify = (running: boolean) => {
+      for (const listener of this.progressListeners.get(accountId) ?? []) {
+        try {
+          listener({
+            accountId,
+            runId,
+            running,
+            pagesRead: checkpoint?.pagesRead ?? 0,
+            itemsRead: savedIds.size,
+            remoteTotal: checkpoint?.remoteTotal ?? null,
+          });
+        } catch {
+          /* A disconnected observer must not interrupt persistence. */
+        }
+      }
+    };
+    notify(true);
     try {
       const account = this.dependencies.accounts.require(accountId);
       trace = startDiagnosticTrace(this.dependencies, {
@@ -253,6 +298,44 @@ export class PlatformContentService {
         result = await platform.content.read(
           opened.dataClient,
           account.externalAccountId,
+          {
+            onPage: async (page) => {
+              const current = this.dependencies.accounts.require(accountId);
+              if (
+                current.platformId !== account.platformId ||
+                current.identityScheme !== account.identityScheme ||
+                current.externalAccountId !== account.externalAccountId
+              ) {
+                throw new Error("账号身份在作品同步期间发生变化");
+              }
+              const observedAt = this.dependencies.now().toISOString();
+              const unique = new Map(
+                page.items.map((item) => [item.externalContentId, item]),
+              );
+              const contents = [...unique.values()].map((data) =>
+                this.apply(account, data, observedAt),
+              );
+              const itemsRead =
+                savedIds.size +
+                [...unique.keys()].filter((id) => !savedIds.has(id)).length;
+              const next: PlatformContentSyncRun = {
+                id: runId,
+                accountId,
+                status: "partial",
+                startedAt,
+                completedAt: observedAt,
+                pagesRead: page.pagesRead,
+                itemsRead,
+                remoteTotal:
+                  page.remoteTotal ?? checkpoint?.remoteTotal ?? null,
+                diagnostics: ["作品同步尚未完成，已保存读取到的页面"],
+              };
+              this.dependencies.repository.saveAll(contents, next);
+              for (const id of unique.keys()) savedIds.add(id);
+              checkpoint = next;
+              notify(true);
+            },
+          },
         );
         for (const message of result.diagnostics ?? []) {
           report(trace, {
@@ -286,31 +369,48 @@ export class PlatformContentService {
         throw new Error("账号身份在作品同步期间发生变化");
       }
       const observedAt = this.dependencies.now().toISOString();
-      if (result.remoteTotal !== undefined) {
-        this.dependencies.accounts.updateContentCount(
-          accountId,
-          result.remoteTotal,
-          observedAt,
-        );
-      }
       const uniqueItems = new Map(
         result.items.map((data) => [data.externalContentId, data]),
       );
-      const contents = [...uniqueItems.values()].map((data) =>
-        this.apply(account, data, observedAt),
-      );
+      const complete =
+        result.complete &&
+        result.pagesRead > 0 &&
+        (result.remoteTotal === undefined ||
+          uniqueItems.size >= result.remoteTotal) &&
+        [...savedIds].every((id) => uniqueItems.has(id));
+      if (result.remoteTotal !== undefined || complete) {
+        this.dependencies.accounts.updateContentCount(
+          accountId,
+          result.remoteTotal ?? uniqueItems.size,
+          observedAt,
+        );
+      }
+      const contents = [...uniqueItems.values()]
+        .filter((data) => !savedIds.has(data.externalContentId))
+        .map((data) => this.apply(account, data, observedAt));
       const run: PlatformContentSyncRun = {
         id: runId,
         accountId,
-        status: result.complete ? "completed" : "partial",
+        status: complete ? "completed" : "partial",
         startedAt,
         completedAt: observedAt,
         pagesRead: result.pagesRead,
-        itemsRead: contents.length,
+        itemsRead: uniqueItems.size,
         remoteTotal: result.remoteTotal ?? null,
-        diagnostics: [...(result.diagnostics ?? [])],
+        diagnostics: [
+          ...(result.diagnostics ?? []),
+          ...(result.complete && !complete
+            ? ["作品同步结果不完整，已保留未读取到的本地作品"]
+            : []),
+        ],
       };
-      this.dependencies.repository.saveAll(contents, run);
+      this.dependencies.repository.saveAll(
+        contents,
+        run,
+        complete ? [...uniqueItems.keys()] : undefined,
+      );
+      checkpoint = run;
+      for (const id of uniqueItems.keys()) savedIds.add(id);
       report(trace, {
         component: "content",
         event: "content.sync.persisted",
@@ -332,10 +432,15 @@ export class PlatformContentService {
         status: "failed",
         startedAt,
         completedAt: this.dependencies.now().toISOString(),
-        pagesRead: 0,
-        itemsRead: 0,
-        remoteTotal: null,
-        diagnostics: [error instanceof Error ? error.message : "作品同步失败"],
+        pagesRead: checkpoint?.pagesRead ?? 0,
+        itemsRead: savedIds.size,
+        remoteTotal: checkpoint?.remoteTotal ?? null,
+        diagnostics: [
+          (error instanceof Error ? error.message : "作品同步失败") +
+            (savedIds.size > 0
+              ? `（已保留 ${checkpoint?.pagesRead ?? 0} 页、${savedIds.size} 条作品）`
+              : ""),
+        ],
       };
       try {
         this.dependencies.repository.saveRun(run);
@@ -373,6 +478,8 @@ export class PlatformContentService {
         outcome: "failed",
       });
       return run;
+    } finally {
+      notify(false);
     }
   }
 

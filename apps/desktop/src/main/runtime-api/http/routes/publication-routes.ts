@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { PublishTagLimitError } from "@nedia-matrix/platform-sdk";
 
 import type { NediaMatrixUseCases } from "../../../application/nedia-matrix-application.js";
 import {
@@ -112,15 +113,13 @@ export class RuntimePublicationRoutes {
           "NOT_LOGGED_IN",
           "ACCOUNT_IDENTITY_MISMATCH",
         ].includes((error as Error & { code?: string }).code ?? "");
-      const status = identityError
-        ? 409
-        : error instanceof TypeError
-          ? 400
-          : 500;
+      const invalidRequest =
+        error instanceof TypeError || error instanceof PublishTagLimitError;
+      const status = identityError ? 409 : invalidRequest ? 400 : 500;
       writeJson(response, status, {
         code: identityError
           ? (error as Error & { code: string }).code
-          : error instanceof TypeError
+          : invalidRequest
             ? "INVALID_REQUEST"
             : "PUBLISH_FAILED",
         message: error instanceof Error ? error.message : "Publish failed",

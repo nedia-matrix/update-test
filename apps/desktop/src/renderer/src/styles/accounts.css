@@ -3,6 +3,9 @@
   max-width: 1180px;
   margin: 0 auto;
 }
+.account-workspace.has-plugin-notice {
+  padding-top: var(--status-bar-height);
+}
 .account-avatar.account-avatar-large {
   width: 52px;
   height: 52px;

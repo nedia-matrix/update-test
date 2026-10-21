@@ -398,7 +398,8 @@
   font-size: 0.68rem;
 }
 
-.browser-onboarding {
+.browser-onboarding,
+.plugin-install-dialog {
   width: min(520px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
   padding: 24px;
@@ -408,8 +409,44 @@
   color: var(--text);
   box-shadow: var(--shadow-popover);
 }
-.browser-onboarding::backdrop {
+.browser-onboarding::backdrop,
+.plugin-install-dialog::backdrop {
   background: rgb(0 0 0 / 48%);
+}
+.plugin-install-hint {
+  flex: 1;
+  min-width: 200px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+.plugin-install-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.plugin-install-summary span {
+  display: grid;
+  gap: 6px;
+}
+.plugin-install-summary small {
+  color: var(--text-secondary);
+}
+.plugin-install-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.plugin-install-footer > button {
+  flex: none;
+  margin-left: auto;
 }
 .browser-onboarding .dialog-header {
   display: block;

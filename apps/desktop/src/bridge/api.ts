@@ -1,4 +1,8 @@
-import type { PlatformPluginSummary, PlatformPluginChange } from "./plugins.js";
+import type {
+  PlatformPluginSummary,
+  PlatformPluginChange,
+  BundledPlatformPlugin,
+} from "./plugins.js";
 import type {
   AccountBrowserState,
   AccountBrowserSwitchStatus,
@@ -27,6 +31,7 @@ import type {
 import type {
   PlatformContentSnapshot,
   PlatformContentSyncRun,
+  PlatformContentSyncProgress,
 } from "@nedia-matrix/platform-content";
 import type {
   OpenPublicationRequest,
@@ -65,6 +70,8 @@ import type { AccountBrowserRuntime } from "./account-browser-runtime.js";
 
 export interface MatrixDesktopApi {
   listPlugins(): Promise<PlatformPluginSummary[]>;
+  listBundledPlugins(): Promise<BundledPlatformPlugin[]>;
+  installBundledPlugin(id: string): Promise<PlatformPluginSummary[]>;
   installPlugin(): Promise<PlatformPluginSummary[]>;
   changePlugin(change: PlatformPluginChange): Promise<PlatformPluginSummary[]>;
   setAccountSettings(
@@ -135,6 +142,9 @@ export interface MatrixDesktopApi {
     items: PlatformContentSnapshot[];
     latestRun: PlatformContentSyncRun | null;
   }>;
+  onPlatformContentSyncProgress(
+    listener: (progress: PlatformContentSyncProgress) => void,
+  ): () => void;
   refreshPlatformContents(
     request: PlatformAccountRequest,
   ): Promise<PlatformContentSyncRun>;

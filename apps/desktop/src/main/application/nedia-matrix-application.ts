@@ -42,6 +42,7 @@ import {
   type PlatformContentRepository,
   type PlatformContentSnapshot,
   type PlatformContentSyncRun,
+  type PlatformContentSyncProgress,
 } from "@nedia-matrix/platform-content";
 import type {
   ApplicationUpdateCheckResult,
@@ -86,7 +87,10 @@ export interface PlatformContentUseCases {
   };
   latestRun(accountId: string): PlatformContentSyncRun | undefined;
   contentUrl(accountId: string, externalContentId: string): string;
-  refresh(accountId: string): Promise<PlatformContentSyncRun>;
+  refresh(
+    accountId: string,
+    onProgress?: (progress: PlatformContentSyncProgress) => void,
+  ): Promise<PlatformContentSyncRun>;
   refreshByExternalIdentity(request: {
     platformId: string;
     externalAccountId: string;
@@ -462,7 +466,8 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       latestRun: (accountId) => this.contentSync.latestRun(accountId),
       contentUrl: (accountId, externalContentId) =>
         this.contentSync.contentUrl(accountId, externalContentId),
-      refresh: (accountId) => this.contentSync.refresh(accountId),
+      refresh: (accountId, onProgress) =>
+        this.contentSync.refresh(accountId, onProgress),
       refreshByExternalIdentity: (request) => {
         const account = this.accountApplication.resolveByExternalIdentity({
           platformId: request.platformId,

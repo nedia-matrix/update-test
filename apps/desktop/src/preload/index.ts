@@ -1,3 +1,4 @@
+import type { PlatformContentSyncProgress } from "@nedia-matrix/platform-content";
 import type { FingerprintBrowserStatus } from "../bridge/fingerprint-browser.js";
 import type { MatrixDesktopApi } from "../bridge/api.js";
 import { ipcChannels } from "../bridge/channels.js";
@@ -30,6 +31,9 @@ import type { AccountBrowserRuntime } from "../bridge/account-browser-runtime.js
 
 const api: MatrixDesktopApi = {
   listPlugins: () => ipcRenderer.invoke(ipcChannels.listPlugins),
+  listBundledPlugins: () => ipcRenderer.invoke(ipcChannels.listBundledPlugins),
+  installBundledPlugin: (id) =>
+    ipcRenderer.invoke(ipcChannels.installBundledPlugin, id),
   installPlugin: () => ipcRenderer.invoke(ipcChannels.installPlugin),
   changePlugin: (change) =>
     ipcRenderer.invoke(ipcChannels.changePlugin, change),
@@ -126,6 +130,18 @@ const api: MatrixDesktopApi = {
   },
   listPlatformContents: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.listPlatformContents, request),
+  onPlatformContentSyncProgress: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      progress: PlatformContentSyncProgress,
+    ) => listener(progress);
+    ipcRenderer.on(ipcChannels.platformContentSyncProgress, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        ipcChannels.platformContentSyncProgress,
+        handler,
+      );
+  },
   refreshPlatformContents: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.refreshPlatformContents, request),
   openPlatformContent: (request) =>

@@ -75,6 +75,12 @@ export async function initializeDesktopPlugins(): Promise<void> {
       throw new Error(plugins.initializationError());
     return plugins.list();
   });
+  ipcMain.handle(ipcChannels.listBundledPlugins, () =>
+    desktopPlugins().listBundled(bundled),
+  );
+  ipcMain.handle(ipcChannels.installBundledPlugin, (_event, id: string) =>
+    desktopPlugins().stageBundledInstall(bundled, id),
+  );
   ipcMain.handle(
     ipcChannels.changePlugin,
     (_event, change: PlatformPluginChange) =>

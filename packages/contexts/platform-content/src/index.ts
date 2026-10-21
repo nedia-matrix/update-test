@@ -13,5 +13,6 @@ export {
   type PlatformContentRepository,
   type PlatformContentServiceDependencies,
   type PlatformContentSyncRun,
+  type PlatformContentSyncProgress,
   type PlatformContentSyncStatus,
 } from "./application/platform-content-service.js";

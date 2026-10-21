@@ -20,6 +20,7 @@ import {
 import type {
   PlatformPluginChange,
   PlatformPluginSummary,
+  BundledPlatformPlugin,
 } from "../../bridge/plugins.js";
 import {
   maxPluginBytes,
@@ -308,6 +309,39 @@ export class PlatformPluginManager {
           throw new Error("预装插件文件无效");
         return readFileSync(path);
       });
+  }
+  private bundledCatalog(directory: string) {
+    const seen = new Set<string>();
+    return this.bundled(directory).map((bytes) => {
+      const plugin = verifyPluginArchive(bytes, this.keys);
+      if (seen.has(plugin.manifest.id)) throw new Error("默认插件平台重复");
+      seen.add(plugin.manifest.id);
+      return { bytes, plugin };
+    });
+  }
+  listBundled(directory: string): BundledPlatformPlugin[] {
+    return this.bundledCatalog(directory).map(({ plugin }) => {
+      const installed = this.state.records.find(
+        (r) => r.id === plugin.manifest.id,
+      );
+      return {
+        id: plugin.manifest.id,
+        displayName: plugin.manifest.displayName,
+        version: plugin.manifest.version,
+        iconUrl: pluginIconUrl(plugin),
+        matchesInstalled:
+          !!installed?.slot && installed.digest === plugin.digest,
+      };
+    });
+  }
+  stageBundledInstall(directory: string, id: string): PlatformPluginSummary[] {
+    // The renderer supplies an ID, never an arbitrary filesystem path.
+    if (typeof id !== "string") throw new Error("默认插件标识无效");
+    const selected = this.bundledCatalog(directory).find(
+      ({ plugin }) => plugin.manifest.id === id,
+    );
+    if (selected) return this.stageInstall(selected.bytes);
+    throw new Error("默认插件不存在");
   }
   /** Stage bundled bytes for an authorized application update or an unpackaged development startup. */
   stageBundledUpdate(directory: string) {

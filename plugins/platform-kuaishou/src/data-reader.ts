@@ -40,6 +40,12 @@ function text(value: unknown): string | undefined {
 }
 
 function count(value: unknown): number | undefined {
+  if (
+    value === null ||
+    (typeof value !== "number" && typeof value !== "string") ||
+    (typeof value === "string" && !value.trim())
+  )
+    return undefined;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
@@ -153,11 +159,14 @@ export function parseKuaishouContentPage(
   const root = record(body);
   if (!root || root.result !== 1) throw new Error("快手作品列表响应失败");
   const data = record(root.data);
-  const source = Array.isArray(data?.list) ? data.list : [];
+  if (!Array.isArray(data?.list))
+    throw new Error("快手作品列表响应缺少 list 列表");
+  const source = data.list;
   return {
-    items: source.flatMap((value) => {
+    items: source.map((value) => {
       const parsed = parseContent(value, expectedExternalAccountId);
-      return parsed ? [parsed] : [];
+      if (!parsed) throw new Error("快手作品列表包含缺少有效作品 ID 的记录");
+      return parsed;
     }),
     ...(text(data?.nextCursor) ? { nextCursor: text(data?.nextCursor) } : {}),
     ...(count(data?.total) !== undefined ? { total: count(data?.total) } : {}),
@@ -206,6 +215,7 @@ export const kuaishouContentCapability: PlatformContentCapability = {
   async read(
     client,
     expectedExternalAccountId,
+    options?: Parameters<PlatformContentCapability["read"]>[2],
   ): Promise<PlatformContentReadResult> {
     const [response] = await navigateForJsonResponses(
       client,
@@ -220,17 +230,22 @@ export const kuaishouContentCapability: PlatformContentCapability = {
     let remoteTotal: number | undefined;
     let nextCursor: string | undefined;
 
-    const addPage = (body: unknown): number => {
+    const addPage = async (body: unknown): Promise<number> => {
       const parsed = parseKuaishouContentPage(body, expectedExternalAccountId);
       const sizeBefore = items.size;
       for (const item of parsed.items) items.set(item.externalContentId, item);
       remoteTotal = parsed.total ?? remoteTotal;
       nextCursor = parsed.nextCursor;
       pagesRead += 1;
+      await options?.onPage?.({
+        items: parsed.items,
+        pagesRead,
+        ...(remoteTotal === undefined ? {} : { remoteTotal }),
+      });
       return items.size - sizeBefore;
     };
 
-    addPage(response.body);
+    await addPage(response.body);
     const initialResult = resultAtPaginationBoundary(
       items,
       pagesRead,
@@ -280,7 +295,7 @@ export const kuaishouContentCapability: PlatformContentCapability = {
         );
       }
 
-      const added = addPage(nextResponse.body);
+      const added = await addPage(nextResponse.body);
       const boundaryResult = resultAtPaginationBoundary(
         items,
         pagesRead,
@@ -321,8 +336,19 @@ function resultAtPaginationBoundary(
   remoteTotal: number | undefined,
   nextCursor: string | undefined,
 ): PlatformContentReadResult | undefined {
-  if (remoteTotal !== undefined && items.size >= remoteTotal) {
-    return completedContentResult(items, pagesRead, remoteTotal);
+  // Kuaishou can retain a nextCursor even when the entire inventory fits on one page.
+  if (remoteTotal !== undefined) {
+    if (items.size === remoteTotal) {
+      return completedContentResult(items, pagesRead, remoteTotal);
+    }
+    if (items.size > remoteTotal) {
+      return partialContentResult(
+        items,
+        pagesRead,
+        remoteTotal,
+        "快手已读取作品数量超过平台总数，列表可能发生变化，请重新同步",
+      );
+    }
   }
   if (nextCursor) return undefined;
   if (remoteTotal !== undefined && items.size < remoteTotal) {

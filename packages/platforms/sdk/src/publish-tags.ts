@@ -6,6 +6,15 @@ export interface PreparedPublishText {
   tagsToAppend: readonly string[];
 }
 
+export class PublishTagLimitError extends RangeError {
+  constructor(maxCount: number, actualCount: number) {
+    super(
+      `This platform supports at most ${maxCount} tags (${actualCount} unique tags across the body and tag input)`,
+    );
+    this.name = "PublishTagLimitError";
+  }
+}
+
 export function normalizePublishBody(
   form: Pick<PlatformPublishFormCapability, "tagPolicy">,
   body: string,
@@ -32,28 +41,35 @@ export function composePublishDescription(
     .join(composition.separator);
 }
 
+/** Unique topic names across plain-text body hashtags and explicit tags. */
+export function collectPublishTags(
+  body: string,
+  requestedTags: readonly string[] | undefined,
+): string[] {
+  return normalizeTags([...bodyHashtags(body), ...(requestedTags ?? [])]);
+}
+
 export function preparePublishText(
   form: Pick<PlatformPublishFormCapability, "tagPolicy">,
   body: string,
   requestedTags: readonly string[] | undefined,
 ): PreparedPublishText {
   const tags = normalizeTags(requestedTags ?? []);
-  if (tags.length === 0) return { body, tags, tagsToAppend: [] };
-
   const policy = form.tagPolicy;
-  if (!policy) {
+  if (!policy && tags.length > 0) {
     throw new TypeError("This platform publish form does not support tags");
   }
-  if (policy.maxCount !== undefined && tags.length > policy.maxCount) {
-    throw new RangeError(
-      `This platform supports at most ${policy.maxCount} tags`,
-    );
+  const allTags = collectPublishTags(body, tags);
+  if (policy?.maxCount !== undefined && allTags.length > policy.maxCount) {
+    throw new PublishTagLimitError(policy.maxCount, allTags.length);
   }
+  if (tags.length === 0) return { body, tags, tagsToAppend: [] };
 
-  const tagsToAppend = tags.filter((tag) => !containsHashtag(body, `#${tag}`));
+  const existingTags = new Set(bodyHashtags(body));
+  const tagsToAppend = tags.filter((tag) => !existingTags.has(tag));
   if (tagsToAppend.length === 0) return { body, tags, tagsToAppend };
 
-  const separator = policy.placement === "inline" ? " " : "\n";
+  const separator = policy?.placement === "inline" ? " " : "\n";
   const normalizedBody = body.trimEnd();
   return {
     body: [normalizedBody, ...tagsToAppend.map((tag) => `#${tag}`)]
@@ -64,25 +80,29 @@ export function preparePublishText(
   };
 }
 
-function containsHashtag(body: string, hashtag: string): boolean {
-  const escapedHashtag = hashtag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(
-    `(^|[^\\p{L}\\p{N}_-])${escapedHashtag}(?=$|[^\\p{L}\\p{N}_-])`,
-    "u",
-  ).test(body);
+function bodyHashtags(body: string): string[] {
+  // A fragment in a link is not a topic. Keep the original body unchanged.
+  const text = body.replace(/(?:[a-z][a-z\d+.-]*:\/\/|www\.)\S+/giu, " ");
+  // Topics may touch preceding prose or another topic; punctuation ends a name.
+  return [...text.matchAll(/#([\p{L}\p{M}\p{N}\p{S}_\u200D-]+)/gu)].map(
+    (match) => match[1]!,
+  );
 }
 
 function normalizeTags(tags: readonly string[]): string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
   for (const requestedTag of tags) {
-    const tag = requestedTag
+    const names = requestedTag
       .trim()
       .replace(/^#+\s*/, "")
-      .trim();
-    if (!tag || seen.has(tag)) continue;
-    seen.add(tag);
-    normalized.push(tag);
+      .split(/\s*#+\s*/u);
+    for (const name of names) {
+      const tag = name.trim();
+      if (!tag || seen.has(tag)) continue;
+      seen.add(tag);
+      normalized.push(tag);
+    }
   }
   return normalized;
 }
