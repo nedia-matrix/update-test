@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { publicationSnapshot } from "./metadata-validation.js";
 import type { DesktopMetadataDatabase } from "./desktop-metadata-database.js";
 
-export const metadataSchemaVersion = 7;
+export const metadataSchemaVersion = 8;
 
 export interface MetadataMigrationObserver {
   report(event: string, details?: Readonly<Record<string, unknown>>): void;
@@ -268,7 +268,77 @@ export function migrateMetadataSchema(
         .prepare("INSERT INTO schema_migrations VALUES (7, ?, ?)")
         .run("Add account merge decision records", new Date().toISOString());
     });
+    version = 7;
     observer?.report("persistence.sqlite.migration_completed", { version: 7 });
+  }
+  if (version === 7) {
+    observer?.report("persistence.sqlite.migration_started", {
+      stage: "schema_v8",
+      version: 8,
+    });
+    if (existed)
+      database.backup(`${database.filename}.before-v8-${randomUUID()}.sqlite`);
+    database.transaction(() => {
+      sql.exec(`
+        CREATE TABLE runtime_access_settings (id INTEGER PRIMARY KEY CHECK(id=1), record TEXT NOT NULL CHECK(json_valid(record))) STRICT;
+        CREATE TABLE runtime_disabled_accounts (account_id TEXT PRIMARY KEY REFERENCES platform_accounts(id) ON DELETE CASCADE) STRICT;
+        CREATE TABLE scheduled_tasks (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL UNIQUE,
+          type TEXT NOT NULL CHECK(type IN ('account_profile_sync','platform_content_sync','publication')),
+          account_id TEXT NOT NULL,
+          platform_id TEXT NOT NULL,
+          request_id TEXT UNIQUE,
+          state TEXT NOT NULL CHECK(state IN ('queued','running','awaiting_confirmation','retry_wait','finalizing','completed','partial','failed','cancelled','uncertain')),
+          record TEXT NOT NULL CHECK(json_valid(record))
+        ) STRICT;
+        CREATE UNIQUE INDEX scheduled_task_account_lease ON scheduled_tasks(account_id)
+          WHERE state IN ('running','awaiting_confirmation','finalizing');
+        CREATE UNIQUE INDEX scheduled_sync_pending ON scheduled_tasks(account_id,type)
+          WHERE type != 'publication' AND state NOT IN ('completed','partial','failed','cancelled','uncertain');
+        CREATE INDEX scheduled_task_queue ON scheduled_tasks(state,sequence);
+        CREATE INDEX scheduled_task_account ON scheduled_tasks(account_id,sequence);
+        CREATE INDEX scheduled_task_platform ON scheduled_tasks(platform_id,sequence);
+        CREATE TABLE task_attempts (
+          task_id TEXT NOT NULL REFERENCES scheduled_tasks(id),
+          attempt INTEGER NOT NULL CHECK(attempt > 0),
+          record TEXT NOT NULL CHECK(json_valid(record)),
+          PRIMARY KEY(task_id,attempt)
+        ) STRICT;
+        CREATE TABLE sync_rules (
+          id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('account_profile_sync','platform_content_sync')),
+          record TEXT NOT NULL CHECK(json_valid(record)),
+          UNIQUE(account_id,type)
+        ) STRICT;
+        CREATE TABLE task_scheduler_settings (
+          id INTEGER PRIMARY KEY CHECK(id=1),
+          max_parallel INTEGER NOT NULL CHECK(max_parallel > 0),
+          retention_days INTEGER NOT NULL DEFAULT 30 CHECK(retention_days > 0)
+        ) STRICT;
+        INSERT INTO task_scheduler_settings VALUES (1,3,30);
+        CREATE TABLE task_attention_seen (
+          task_id TEXT PRIMARY KEY REFERENCES scheduled_tasks(id) ON DELETE CASCADE,
+          version TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE task_request_markers (
+          request_id TEXT PRIMARY KEY,
+          record TEXT NOT NULL CHECK(json_valid(record))
+        ) STRICT;
+        CREATE INDEX scheduled_task_history ON scheduled_tasks(sequence, json_extract(record,'$.endedAt'))
+          WHERE state IN ('completed','partial','failed','cancelled','uncertain');
+        CREATE TABLE task_cooldowns (scope TEXT PRIMARY KEY, until_ms INTEGER NOT NULL) STRICT;
+        PRAGMA user_version=8;
+      `);
+      sql
+        .prepare("INSERT INTO schema_migrations VALUES (8, ?, ?)")
+        .run(
+          "Add local runtime access settings and unified task scheduling",
+          new Date().toISOString(),
+        );
+    });
+    observer?.report("persistence.sqlite.migration_completed", { version: 8 });
   }
 }
 

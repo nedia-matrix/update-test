@@ -1,4 +1,9 @@
 import {
+  PlatformSyncError,
+  platformSyncFailure,
+  type PlatformSyncFailure,
+} from "@nedia-matrix/platform-sdk";
+import {
   resolveAccountPlatform,
   type AccountPlatformCatalog,
 } from "@nedia-matrix/platform-sdk";
@@ -34,6 +39,7 @@ export interface PlatformContentSyncRun {
   readonly itemsRead: number;
   readonly remoteTotal: number | null;
   readonly diagnostics: readonly string[];
+  readonly failure?: PlatformSyncFailure;
 }
 
 export interface PlatformContentRepository {
@@ -67,6 +73,7 @@ export interface PlatformContentAccount {
 }
 
 export interface PlatformContentServiceDependencies {
+  preserveMissing?: boolean;
   accounts: {
     require(accountId: string): PlatformContentAccount;
     updateContentCount(
@@ -246,13 +253,22 @@ export class PlatformContentService {
         account.identityScheme === null ||
         account.externalAccountId === null
       ) {
-        throw new Error("请先完成平台账号登录识别");
+        throw new PlatformSyncError({
+          code: "authentication",
+          message: "请先完成平台账号登录识别",
+          retryable: false,
+        });
       }
       const platform = resolveAccountPlatform(
         this.dependencies.platforms,
         account,
       );
-      if (!platform.content) throw new Error("该平台暂不支持作品同步");
+      if (!platform.content)
+        throw new PlatformSyncError({
+          code: "unsupported",
+          message: "该平台暂不支持作品同步",
+          retryable: false,
+        });
       const opened = await this.dependencies.browser.open(
         accountId,
         platform,
@@ -281,11 +297,19 @@ export class PlatformContentService {
           verified.identityScheme !== account.identityScheme ||
           verified.externalAccountId !== account.externalAccountId
         ) {
-          throw new Error(
-            verified.status === "unknown" && verified.reason
-              ? verified.reason
-              : "当前登录的平台账号与本地记录不一致",
-          );
+          throw new PlatformSyncError({
+            code:
+              verified.status === "login_required"
+                ? "authentication"
+                : verified.status === "unknown"
+                  ? "verification_required"
+                  : "identity_mismatch",
+            message:
+              verified.status === "unknown" && verified.reason
+                ? verified.reason
+                : "当前登录的平台账号与本地记录不一致",
+            retryable: false,
+          });
         }
         const readerStartedAt = monotonicNow();
         report(trace, {
@@ -358,7 +382,19 @@ export class PlatformContentService {
           },
         });
       } finally {
-        await opened.close();
+        try {
+          await opened.close();
+        } catch (error) {
+          throw new PlatformSyncError(
+            {
+              code: "resource_close_failed",
+              message: "同步页面关闭失败",
+              retryable: false,
+              resourcesClosed: false,
+            },
+            { cause: error },
+          );
+        }
       }
       const current = this.dependencies.accounts.require(accountId);
       if (
@@ -394,6 +430,7 @@ export class PlatformContentService {
         status: complete ? "completed" : "partial",
         startedAt,
         completedAt: observedAt,
+        ...(result.failure ? { failure: result.failure } : {}),
         pagesRead: result.pagesRead,
         itemsRead: uniqueItems.size,
         remoteTotal: result.remoteTotal ?? null,
@@ -407,7 +444,9 @@ export class PlatformContentService {
       this.dependencies.repository.saveAll(
         contents,
         run,
-        complete ? [...uniqueItems.keys()] : undefined,
+        complete && !this.dependencies.preserveMissing
+          ? [...uniqueItems.keys()]
+          : undefined,
       );
       checkpoint = run;
       for (const id of uniqueItems.keys()) savedIds.add(id);
@@ -435,6 +474,7 @@ export class PlatformContentService {
         pagesRead: checkpoint?.pagesRead ?? 0,
         itemsRead: savedIds.size,
         remoteTotal: checkpoint?.remoteTotal ?? null,
+        failure: platformSyncFailure(error),
         diagnostics: [
           (error instanceof Error ? error.message : "作品同步失败") +
             (savedIds.size > 0
@@ -462,7 +502,15 @@ export class PlatformContentService {
           },
         });
         finish(trace, { outcome: "failed" });
-        throw persistenceError;
+        throw new PlatformSyncError(
+          {
+            code: "persistence_failed",
+            message: "同步结果持久化失败",
+            retryable: false,
+            resourcesClosed: run.failure?.resourcesClosed !== false,
+          },
+          { cause: persistenceError },
+        );
       }
       report(trace, {
         component: "content",

@@ -1,3 +1,5 @@
+import type { UpdateLocalRuntimeSettings } from "../../../bridge/runtime-access.js";
+import type { RuntimeAccess } from "../security/runtime-access.js";
 import {
   createServer,
   type IncomingMessage,
@@ -9,7 +11,7 @@ import type { DiagnosticTraceService } from "@nedia-matrix/diagnostics";
 import { randomUUID } from "node:crypto";
 
 import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
-import { writeJson } from "./http-json.js";
+import { readJsonRequest, writeJson } from "./http-json.js";
 import { RuntimeRouter, type LocalRuntimeHandshake } from "./runtime-router.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -21,6 +23,7 @@ interface LocalRuntimeHttpServerOptions {
   application: NediaMatrixUseCases;
   handshake: LocalRuntimeHandshake;
   port?: number;
+  access?: RuntimeAccess;
   diagnostics?: Pick<DiagnosticTraceService, "start">;
 }
 
@@ -36,6 +39,7 @@ export function readLocalRuntimePort(value: unknown): number {
 }
 
 export class LocalRuntimeHttpServer {
+  private configuredPort: number;
   private boundPort: number | null = null;
   private lifecycle = Promise.resolve();
   private readonly router: RuntimeRouter;
@@ -44,7 +48,34 @@ export class LocalRuntimeHttpServer {
   });
 
   constructor(private readonly options: LocalRuntimeHttpServerOptions) {
-    this.router = new RuntimeRouter(options.application, options.handshake);
+    this.configuredPort =
+      options.access?.view().port ?? options.port ?? DEFAULT_LOCAL_RUNTIME_PORT;
+    this.router = new RuntimeRouter(
+      options.application,
+      options.handshake,
+      options.access,
+    );
+  }
+
+  updateSettings(input: UpdateLocalRuntimeSettings): Promise<void> {
+    return this.enqueueLifecycleOperation(async () => {
+      const access = this.options.access;
+      if (!access) throw new Error("Runtime access settings unavailable");
+      const next = await access.prepare(input);
+      const previousPort = this.boundPort ?? this.configuredPort;
+      const running = this.boundPort !== null;
+      await this.stopListening();
+      this.configuredPort = next.port;
+      try {
+        if (running) await this.startListening();
+        access.commit(next);
+      } catch (error) {
+        await this.stopListening();
+        this.configuredPort = previousPort;
+        if (running) await this.startListening();
+        throw error;
+      }
+    });
   }
 
   start(): Promise<number> {
@@ -68,6 +99,10 @@ export class LocalRuntimeHttpServer {
     this.router.publishPublicationUpdate(publicationId);
   }
 
+  publishTasksChanged(): void {
+    this.router.publishTasksChanged();
+  }
+
   publishAccountsChanged(): void {
     this.router.publishAccountsChanged();
   }
@@ -79,14 +114,10 @@ export class LocalRuntimeHttpServer {
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       this.server.once("error", onError);
-      this.server.listen(
-        this.options.port ?? DEFAULT_LOCAL_RUNTIME_PORT,
-        LOOPBACK_HOST,
-        () => {
-          this.server.off("error", onError);
-          resolve();
-        },
-      );
+      this.server.listen(this.configuredPort, LOOPBACK_HOST, () => {
+        this.server.off("error", onError);
+        resolve();
+      });
     });
 
     const address = this.server.address();
@@ -106,6 +137,7 @@ export class LocalRuntimeHttpServer {
     const stopped = new Promise<void>((resolve, reject) => {
       this.server.close((error) => (error ? reject(error) : resolve()));
     });
+    this.options.access?.revoke();
     this.router.close();
     this.server.closeAllConnections();
     await stopped;
@@ -133,9 +165,22 @@ export class LocalRuntimeHttpServer {
       return;
     }
 
-    response.setHeader("Access-Control-Allow-Origin", "*");
+    const origin = request.headers.origin;
+    if (this.options.access && !this.options.access.allowsOrigin(origin)) {
+      rejectionCode = "ORIGIN_NOT_ALLOWED";
+      writeJson(response, 403, { code: rejectionCode });
+      return;
+    }
+    const wildcard =
+      !this.options.access ||
+      this.options.access.view().allowedOrigins.includes("*");
+    response.setHeader("Access-Control-Allow-Origin", wildcard ? "*" : origin!);
+    if (!wildcard) response.setHeader("Vary", "Origin");
     if (request.method === "OPTIONS") {
-      response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      response.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization",
+      );
       response.setHeader(
         "Access-Control-Allow-Methods",
         "DELETE, GET, POST, PUT, OPTIONS",
@@ -151,8 +196,43 @@ export class LocalRuntimeHttpServer {
     }
 
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/auth/session" &&
+      this.options.access
+    ) {
+      void this.authenticate(request, response);
+      return;
+    }
+    if (
+      this.options.access &&
+      !this.options.access.authorized(request.headers.authorization, origin)
+    ) {
+      rejectionCode = "SESSION_INVALID";
+      writeJson(response, 401, { code: rejectionCode });
+      return;
+    }
     if (!this.router.route(request, response, url)) {
       writeJson(response, 404, { code: "NOT_FOUND" });
+    }
+  }
+
+  private async authenticate(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    try {
+      const body = await readJsonRequest(request);
+      const result = await this.options.access!.authenticate(
+        body.password,
+        request.headers.origin,
+      );
+      if (response.destroyed) return;
+      if (result.status === 429) response.setHeader("Retry-After", "60");
+      writeJson(response, result.status, result.body);
+    } catch {
+      if (!response.destroyed)
+        writeJson(response, 400, { code: "INVALID_REQUEST" });
     }
   }
 

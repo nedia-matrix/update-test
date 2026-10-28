@@ -13,7 +13,7 @@
 }
 .settings-tabs > button:focus-visible,
 .settings-tab-panel:focus-visible {
-  outline: 3px solid var(--focus-ring);
+  outline: 1px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -24,36 +24,6 @@
 }
 .settings-tab-panel[hidden] {
   display: none;
-}
-.settings-section-header {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  border-radius: 7px 7px 0 0;
-  background: var(--surface-muted);
-}
-.settings-section-header > div {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 12px;
-}
-.settings-section-header h2 {
-  flex: none;
-  margin: 0;
-  color: var(--text);
-  font-size: 0.82rem;
-  font-weight: 700;
-  line-height: 1.5;
-}
-.settings-section-header p {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: 0.66rem;
-  line-height: 1.5;
 }
 .theme-options {
   display: grid;
@@ -81,10 +51,6 @@
   border-color: var(--accent);
   background: var(--accent-soft);
 }
-.theme-option:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 .theme-option-copy {
   display: grid;
   width: 100%;
@@ -99,11 +65,6 @@
 .theme-option-copy strong {
   font-size: 0.73rem;
 }
-.theme-option-copy small {
-  color: var(--text-tertiary);
-  font-size: 0.59rem;
-  font-weight: 450;
-}
 .theme-check {
   display: grid;
   width: 18px;
@@ -117,82 +78,6 @@
   border-color: var(--accent);
   background: var(--accent);
 }
-.settings-list {
-  margin: 0;
-}
-.settings-list > div {
-  display: grid;
-  grid-template-columns: minmax(110px, 0.3fr) minmax(0, 1fr);
-  gap: 28px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.settings-list > div:last-child {
-  border-bottom: 0;
-}
-.settings-list dt {
-  color: var(--text);
-  font-size: 0.7rem;
-  font-weight: 650;
-}
-.settings-list dd {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.68rem;
-  line-height: 1.5;
-}
-.technical-information {
-  border-top: 1px solid var(--border);
-}
-.technical-information summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  cursor: pointer;
-  list-style: none;
-}
-.technical-information summary::-webkit-details-marker {
-  display: none;
-}
-.technical-information summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.technical-information summary > svg {
-  color: var(--text-secondary);
-  transform: rotate(-90deg);
-}
-.technical-information[open] summary > svg {
-  transform: none;
-}
-.technical-information summary strong {
-  font-size: 0.76rem;
-  font-weight: 650;
-}
-.technical-information summary > span {
-  color: var(--text-tertiary);
-  font-size: 0.66rem;
-}
-.technical-information-body {
-  border-top: 1px solid var(--border);
-}
-.technical-information-body > p,
-.technical-information-error {
-  padding: 12px 16px;
-}
-.technical-information-error,
-.technical-information-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.technical-information-actions {
-  justify-content: flex-end;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-}
 .technical-information .settings-list dd {
   overflow-wrap: anywhere;
   user-select: text;
@@ -205,31 +90,8 @@
   gap: 20px;
   padding: 14px 16px;
 }
-.browser-settings .runtime-settings-row + .runtime-settings-row,
 .platform-plugin-settings .runtime-settings-row + .runtime-settings-row {
   border-top: 1px solid var(--border);
-}
-.runtime-settings-status {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-.runtime-settings-status > span:last-child {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-.runtime-settings-status strong {
-  font-size: 0.76rem;
-}
-.runtime-settings-status small {
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.62rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .runtime-stop-button {
   color: var(--danger);
@@ -250,15 +112,6 @@
 .update-settings-body {
   min-width: 0;
 }
-.update-settings-overview {
-  display: flex;
-  min-height: 64px;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px 20px;
-  padding: 12px 16px;
-}
 .update-settings-summary {
   display: grid;
   min-width: 0;
@@ -271,12 +124,6 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-}
-.update-version strong,
-.update-source-label {
-  color: var(--text);
-  font-size: 0.76rem;
-  font-weight: 650;
 }
 .update-version small {
   color: var(--text-secondary);
@@ -291,25 +138,9 @@
   font-size: 0.62rem;
   font-weight: 550;
 }
-.update-settings-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
 .update-settings-feedback {
   display: grid;
   gap: 6px;
-}
-.update-check-feedback {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.68rem;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.update-check-error {
-  color: var(--danger);
 }
 .update-download-progress {
   display: flex;
@@ -341,61 +172,10 @@
   border-radius: 3px;
   background: var(--accent);
 }
-.update-source-settings {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-}
-.update-source-copy {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 12px;
-}
-.update-source-label {
-  flex: none;
-}
-.update-source-copy p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.66rem;
-  line-height: 1.6;
-}
-.update-source-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-}
-.update-source-controls .update-settings-actions {
-  flex-wrap: nowrap;
-}
-.update-source-controls button {
-  white-space: nowrap;
-}
-.update-source-controls button:disabled {
-  cursor: default;
-}
-.update-source-input {
-  font-size: 0.72rem;
-}
-.update-source-input:disabled {
-  opacity: 0.6;
-}
 
-.platform-plugin-settings .settings-section-header {
-  justify-content: space-between;
-  gap: 16px;
-  padding-block: 7px;
-}
-.platform-plugin-settings .settings-section-header > button {
-  flex: none;
-  min-height: 24px;
-  font-size: 0.68rem;
+.plugin-empty-state {
+  min-height: 140px;
+  padding: 24px;
 }
 
 .browser-onboarding,
@@ -486,4 +266,164 @@
   justify-content: flex-end;
   gap: 8px;
   margin-left: auto;
+}
+
+.runtime-access-form {
+  --runtime-input-width: 360px;
+}
+.runtime-access-form fieldset {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+.runtime-password-control {
+  display: flex;
+  width: 100%;
+  max-width: calc(var(--runtime-input-width) + 40px);
+  align-items: center;
+  gap: 8px;
+}
+.runtime-password-control input {
+  min-width: 0;
+  flex: 1;
+}
+.runtime-access-form input:not([type="checkbox"]) {
+  max-width: var(--runtime-input-width);
+}
+.runtime-access-form .runtime-access-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.68rem;
+}
+.runtime-access-check input[type="checkbox"] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.settings-header-actions > .theme-options {
+  display: grid;
+  width: 420px;
+  max-width: 100%;
+  gap: 8px;
+  margin-left: auto;
+  padding: 0;
+}
+.settings-overview-header .theme-option {
+  min-height: 34px;
+  padding: 8px 10px;
+}
+
+.technical-information .settings-list > div {
+  border-bottom: 0;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 20px;
+  padding: 3px 0;
+}
+.technical-information .settings-list dt {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.technical-information .settings-list dd {
+  color: var(--text);
+}
+.runtime-access-form .settings-editor {
+  grid-template-columns: minmax(0, 1fr) 144px;
+}
+
+.settings-header-info .update-version small {
+  font-family: inherit;
+}
+
+.runtime-origin-mode {
+  justify-content: space-between;
+}
+.runtime-origin-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.runtime-origin-row > input {
+  flex: 0 1 var(--runtime-input-width);
+}
+.runtime-origin-row > .settings-actions {
+  flex: none;
+}
+.runtime-origin-list {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.technical-information .settings-editor > .settings-editor-actions,
+.task-scheduling .settings-editor > .settings-editor-actions {
+  width: 180px;
+  max-width: 100%;
+  flex-direction: column;
+}
+.technical-information .settings-editor > .settings-editor-actions {
+  align-items: stretch;
+}
+.task-scheduling .settings-editor > .settings-editor-actions {
+  align-items: flex-end;
+}
+.task-scheduling .settings-editor-actions > .button-link {
+  width: 100%;
+  min-height: 32px;
+}
+.task-scheduling .settings-row-label > label {
+  font-size: 0.73rem;
+  font-weight: 650;
+}
+
+.task-scheduling .settings-row-label,
+.sync-rule-period {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.task-scheduling .settings-row-label input,
+.sync-rule-period input {
+  width: 100px;
+  max-width: 100%;
+}
+
+.sync-rule-period {
+  flex-wrap: nowrap;
+}
+.sync-rule-period > input {
+  flex: 0 1 100px;
+  min-width: 60px;
+}
+.sync-rule-period > strong,
+.sync-rule-period > span {
+  white-space: nowrap;
+}
+
+.sync-rule-controls {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.sync-rule-controls > input {
+  width: 64px;
+  min-width: 0;
+  flex: none;
+}
+.sync-rule-controls .settings-segmented-control {
+  flex: none;
+  flex-wrap: nowrap;
+}
+.sync-rule-unit {
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
 }

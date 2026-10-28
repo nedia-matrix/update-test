@@ -212,6 +212,7 @@ export class PublishDraftOrchestrator {
       return { status: "account_busy" } as const;
     }
     let leaseReleased = false;
+    let resourceCloseFailed = false;
     const publicationLease = {
       release: () => {
         if (leaseReleased) return;
@@ -472,9 +473,19 @@ export class PublishDraftOrchestrator {
           throw new Error(`接口${failureStage}失败，未确认发起发布`);
         } finally {
           try {
-            await session?.close();
+            try {
+              await session?.close();
+            } catch (error) {
+              resourceCloseFailed = true;
+              throw error;
+            }
           } finally {
-            await direct.close();
+            try {
+              await direct.close();
+            } catch (error) {
+              resourceCloseFailed = true;
+              throw error;
+            }
           }
         }
       }
@@ -514,11 +525,8 @@ export class PublishDraftOrchestrator {
         monitor,
         diagnostics: trace,
         onFinished: async (result) => {
-          try {
-            await publishPage.release();
-          } finally {
-            publicationLease.release();
-          }
+          await publishPage.release();
+          publicationLease.release();
           if (result?.kind === "failed" || result?.kind === "uncertain") {
             failureNoticeShown = true;
             showPublicationFailureNotice(
@@ -674,11 +682,8 @@ export class PublishDraftOrchestrator {
         : result;
     } finally {
       if (!observationOwnsLease) {
-        try {
-          await opened?.release();
-        } finally {
-          publicationLease.release();
-        }
+        await opened?.release();
+        if (!resourceCloseFailed) publicationLease.release();
       }
     }
   }

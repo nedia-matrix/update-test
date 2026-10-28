@@ -36,6 +36,7 @@ export class PublicationArchiveMaintenance {
     private readonly activity: {
       hasActiveTask(publicationId: string): boolean;
       hasActiveAssetUsers?(): boolean;
+      additionalReferencedPaths?(): ReadonlySet<string>;
       now(): Date;
     } = {
       hasActiveTask: () => false,
@@ -53,6 +54,8 @@ export class PublicationArchiveMaintenance {
     const publications = this.publications.list();
     const assets = await this.assets.list();
     const referencedPaths = publicationAssetPaths(publications);
+    for (const path of this.activity.additionalReferencedPaths?.() ?? [])
+      referencedPaths.add(path);
     const referencedBytes = sumAssetBytes(assets, referencedPaths);
     const totalBytes = sumAssetBytes(assets);
     return {

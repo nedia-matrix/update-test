@@ -1,3 +1,5 @@
+import { TaskDrawer } from "./components/task-drawer.js";
+import { TasksPage } from "./pages/tasks-page.js";
 import type { PlatformAccountView } from "@nedia-matrix/account-management";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
@@ -32,6 +34,7 @@ const routes: readonly RouteDefinition[] = [
     title: "内容发布",
     icon: "publish",
   },
+  { path: "/tasks", title: "任务管理", icon: "tasks" },
   {
     path: "/settings",
     title: "设置",
@@ -346,6 +349,7 @@ export function App({
             )}
           </nav>
 
+          <TaskDrawer accounts={accounts} />
           <footer class="sidebar-status-bar">
             <div class="sidebar-version">
               <span class="sidebar-version-number" title="应用版本">
@@ -364,9 +368,16 @@ export function App({
               )}
             </div>
             <nav class="primary-navigation" aria-label="全局功能">
-              {routes.slice(1).map((item) => (
-                <NavigationLink item={item} active={item.path === route.path} />
-              ))}
+              {routes
+                .filter(
+                  (item) => item.path !== "/accounts" && item.path !== "/tasks",
+                )
+                .map((item) => (
+                  <NavigationLink
+                    item={item}
+                    active={item.path === route.path}
+                  />
+                ))}
             </nav>
           </footer>
         </aside>
@@ -392,6 +403,8 @@ export function App({
               context={context}
               preferredAccountId={selectedAccountId}
             />
+          ) : route.path === "/tasks" ? (
+            <TasksPage context={context} />
           ) : (
             <SettingsPage
               context={context}

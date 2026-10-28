@@ -69,7 +69,7 @@ export default defineConfig({
       jsxImportSource: "preact",
     },
     server: {
-      port: 3000,
+      port: 8888,
       strictPort: true,
     },
   },

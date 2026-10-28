@@ -1,3 +1,5 @@
+import { RuntimeAccountAccess } from "../security/runtime-account-access.js";
+import type { RuntimeAccess } from "../security/runtime-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
@@ -11,7 +13,13 @@ import { RuntimePublicationRoutes } from "./routes/publication-routes.js";
 
 export type RuntimeEvent =
   | ReturnType<typeof runtimePublicationEvent>
-  | { type: "runtime.accounts.changed" };
+  | { type: "runtime.accounts.changed" }
+  | {
+      type: "runtime.task.changed";
+      taskId: string;
+      requestId: string;
+      state: string;
+    };
 
 export interface LocalRuntimeHandshake {
   protocolVersion: 1;
@@ -30,23 +38,49 @@ export interface LocalRuntimeHandshake {
     platformIdentityAddressing: boolean;
     platformContentSnapshots: boolean;
     platformContentSync: boolean;
+    queuedPublications?: boolean;
+    taskHistoryRetention?: boolean;
   };
 }
 
 export class RuntimeRouter {
   private readonly events = new RuntimeEventBuffer<RuntimeEvent>();
   private readonly accountRoutes: RuntimeAccountRoutes;
-  private readonly eventRoutes = new RuntimeEventRoutes(this.events);
+  private readonly eventRoutes: RuntimeEventRoutes<RuntimeEvent>;
+  private readonly access: RuntimeAccountAccess;
   private readonly platformContentRoutes: RuntimePlatformContentRoutes;
   private readonly publicationRoutes: RuntimePublicationRoutes;
 
   constructor(
     private readonly application: NediaMatrixUseCases,
     private readonly handshake: LocalRuntimeHandshake,
+    access?: RuntimeAccess,
   ) {
-    this.accountRoutes = new RuntimeAccountRoutes(application);
-    this.platformContentRoutes = new RuntimePlatformContentRoutes(application);
-    this.publicationRoutes = new RuntimePublicationRoutes(application);
+    this.access = new RuntimeAccountAccess(application, access);
+    this.eventRoutes = new RuntimeEventRoutes(this.events, (event) => {
+      if (event.type === "runtime.accounts.changed") return true;
+      if (event.type === "runtime.task.changed") {
+        const task = application.tasks?.get(event.taskId);
+        return (
+          !!task &&
+          task.source === "runtime" &&
+          this.access.allowed(task.accountId)
+        );
+      }
+      const publication = application.publications
+        .list()
+        .find((item) => item.requestId === event.requestId);
+      return !!publication && this.access.allowed(publication.accountId);
+    });
+    this.accountRoutes = new RuntimeAccountRoutes(application, this.access);
+    this.platformContentRoutes = new RuntimePlatformContentRoutes(
+      application,
+      this.access,
+    );
+    this.publicationRoutes = new RuntimePublicationRoutes(
+      application,
+      this.access,
+    );
   }
 
   open(): void {
@@ -62,6 +96,38 @@ export class RuntimeRouter {
       .list()
       .find((publication) => publication.id === publicationId);
     if (summary) this.events.append(runtimePublicationEvent(summary));
+  }
+
+  private readonly taskRevisions = new Map<string, string>();
+  publishTasksChanged(): void {
+    if (!this.application.tasks) return;
+    // Only active Runtime requests need events; status queries remain authoritative.
+    for (let offset = 0; ; offset += 100) {
+      const page = this.application.tasks.query({
+        type: "publication",
+        limit: 100,
+        offset,
+      });
+      for (const task of page.items)
+        if (task.source === "runtime" && task.requestId) {
+          const revision = JSON.stringify([
+            task.updatedAt,
+            task.state,
+            task.phase,
+            task.publicationId,
+            task.error,
+          ]);
+          if (this.taskRevisions.get(task.id) === revision) continue;
+          this.taskRevisions.set(task.id, revision);
+          this.events.append({
+            type: "runtime.task.changed",
+            taskId: task.id,
+            requestId: task.requestId,
+            state: task.state,
+          });
+        }
+      if (offset + page.items.length >= page.total) break;
+    }
   }
 
   publishAccountsChanged(): void {

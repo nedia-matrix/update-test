@@ -1,3 +1,9 @@
+import type { TaskUseCases } from "./tasks.js";
+import type {
+  LocalRuntimeSettings,
+  UpdateLocalRuntimeSettings,
+  RuntimeAccountAccess,
+} from "./runtime-access.js";
 import type {
   PlatformPluginSummary,
   PlatformPluginChange,
@@ -69,11 +75,18 @@ import type {
 import type { AccountBrowserRuntime } from "./account-browser-runtime.js";
 
 export interface MatrixDesktopApi {
+  tasks: {
+    [K in keyof TaskUseCases]: (
+      ...args: Parameters<TaskUseCases[K]>
+    ) => Promise<ReturnType<TaskUseCases[K]>>;
+  };
+  onTasksChanged(listener: () => void): () => void;
   listPlugins(): Promise<PlatformPluginSummary[]>;
   listBundledPlugins(): Promise<BundledPlatformPlugin[]>;
   installBundledPlugin(id: string): Promise<PlatformPluginSummary[]>;
   installPlugin(): Promise<PlatformPluginSummary[]>;
   changePlugin(change: PlatformPluginChange): Promise<PlatformPluginSummary[]>;
+  restartForPluginChanges(): Promise<void>;
   setAccountSettings(
     request: import("@nedia-matrix/account-management").SetAccountSettingsRequest,
   ): Promise<PlatformAccountView>;
@@ -192,6 +205,14 @@ export interface MatrixDesktopApi {
   openPublicationReview(request: OpenPublicationRequest): Promise<void>;
   openPublication(request: OpenPublicationRequest): Promise<void>;
   onPublishResultUpdate(listener: (update: PublishResultUpdate) => void): void;
+  getLocalRuntimeSettings(): Promise<LocalRuntimeSettings>;
+  updateLocalRuntimeSettings(
+    request: UpdateLocalRuntimeSettings,
+  ): Promise<LocalRuntimeSettings>;
+  getRuntimeAccountAccess(accountId: string): Promise<RuntimeAccountAccess>;
+  setRuntimeAccountAccess(
+    request: RuntimeAccountAccess,
+  ): Promise<RuntimeAccountAccess>;
   getLocalRuntimeStatus(): Promise<LocalRuntimeStatus>;
   setLocalRuntimeRunning(
     request: SetLocalRuntimeRunningRequest,

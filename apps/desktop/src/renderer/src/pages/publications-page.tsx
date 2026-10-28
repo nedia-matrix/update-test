@@ -308,9 +308,9 @@ export function PublicationsPage({
           <span>平台 / 账号</span>
           <span>状态信息</span>
           <span>更新时间</span>
-          <span>操作</span>
+          <span class="publication-actions-heading">操作</span>
         </div>
-        <div class="content-list" aria-live="polite">
+        <div aria-live="polite">
           {loading ? (
             <EmptyContent title="正在加载发布记录…" />
           ) : filtered.length === 0 ? (
@@ -1170,7 +1170,7 @@ function PublicationRow({
               </section>
             )}
           </div>
-          <details class="publication-detail-history publication-status-history">
+          <details class="publication-detail-history">
             <summary>
               <span class="publication-status-heading">
                 历史记录

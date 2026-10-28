@@ -141,6 +141,10 @@ export class PlaywrightBrowserSessionHost {
     };
   }
 
+  isBrowserUnderMaintenance(): boolean {
+    return this.browserMaintenance !== undefined;
+  }
+
   isAccountBrowserBusy(accountId: string, profileId: string): boolean {
     return (
       this.transitions.has(profileId) ||

@@ -1,3 +1,8 @@
+import {
+  SettingsSection,
+  SettingsHeader,
+  SettingsEditor,
+} from "./settings-primitives.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { AccountBrowserProvider } from "@nedia-matrix/account-management";
 import {
@@ -61,115 +66,103 @@ export function AccountBrowserSettings({
     state.operation?.error?.code === "unavailable";
   const targetName = target === "fingerprint" ? "定制环境" : "标准环境";
   return (
-    <section
-      class="settings-surface account-browser-settings"
-      aria-label="账号浏览器环境"
-    >
-      <header class="settings-section-header">
-        <div>
-          <h2>浏览器环境</h2>
-          <p>仅对当前账号生效</p>
-        </div>
-      </header>
-      <div class="account-settings-row">
-        <div class="account-settings-copy">
-          <strong
-            title={
-              environment?.version
-                ? `浏览器版本：${environment.version}`
-                : undefined
-            }
-          >
-            {!environment
-              ? error
-                ? "暂时无法读取浏览器环境"
-                : "正在读取…"
-              : provider === "fingerprint"
-                ? "定制环境"
-                : provider === "system"
-                  ? "标准环境"
-                  : "暂时无法读取浏览器环境"}
-          </strong>
-          {provider && (
-            <p>
-              {environment?.externalKernel
-                ? "使用指定浏览器"
+    <SettingsSection aria-label="账号浏览器环境">
+      <SettingsHeader
+        title="浏览器环境"
+        summary={
+          <>
+            <span>
+              {!environment
+                ? error
+                  ? "暂时无法读取浏览器环境"
+                  : ""
                 : provider === "fingerprint"
-                  ? "使用专门的浏览器配置"
-                  : "使用应用默认的浏览器配置"}
-            </p>
-          )}
-        </div>
-        <div class="account-settings-actions">
-          {!active && !target && environment?.switchSupported && (
-            <button
-              class={
-                provider === "system"
-                  ? "primary-outline-button small-button"
-                  : "secondary-button small-button"
-              }
-              type="button"
-              disabled={state.pending || disabled}
-              onClick={() =>
-                setTarget(provider === "system" ? "fingerprint" : "system")
-              }
-            >
-              {provider === "system" ? "切换到定制环境" : "切换到标准环境"}
-            </button>
-          )}
-          {active && (
-            <button
-              class="secondary-button small-button"
-              type="button"
-              disabled={
-                state.pending ||
-                state.operation?.phase === "committing" ||
-                state.operation?.phase === "cancelling"
-              }
-              onClick={() => void controller.current?.cancel()}
-            >
-              取消切换
-            </button>
-          )}
-          {!environment && error && (
-            <button
-              class="secondary-button small-button"
-              type="button"
-              disabled={state.pending || disabled}
-              onClick={() => void controller.current?.load()}
-            >
-              重试读取
-            </button>
-          )}
-        </div>
-      </div>
+                  ? "定制环境"
+                  : provider === "system"
+                    ? "标准环境"
+                    : "暂时无法读取浏览器环境"}
+            </span>
+            {environment?.externalKernel && <span>指定浏览器</span>}
+            {environment?.version && <span>v{environment.version}</span>}
+          </>
+        }
+        actions={
+          <div class="settings-actions">
+            {!active && !target && environment?.switchSupported && (
+              <button
+                class={
+                  provider === "system"
+                    ? "primary-outline-button small-button"
+                    : "secondary-button small-button"
+                }
+                type="button"
+                disabled={state.pending || disabled}
+                onClick={() =>
+                  setTarget(provider === "system" ? "fingerprint" : "system")
+                }
+              >
+                {provider === "system" ? "切换到定制环境" : "切换到标准环境"}
+              </button>
+            )}
+            {active && (
+              <button
+                class="secondary-button small-button"
+                type="button"
+                disabled={
+                  state.pending ||
+                  state.operation?.phase === "committing" ||
+                  state.operation?.phase === "cancelling"
+                }
+                onClick={() => void controller.current?.cancel()}
+              >
+                取消切换
+              </button>
+            )}
+            {!environment && error && (
+              <button
+                class="secondary-button small-button"
+                type="button"
+                disabled={state.pending || disabled}
+                onClick={() => void controller.current?.load()}
+              >
+                重试读取
+              </button>
+            )}
+          </div>
+        }
+      />
       {target && !active && (
         <div class="account-browser-switch-confirm">
-          <strong>切换到{targetName}</strong>
-          <p>
-            请在新窗口重新登录同一个平台账号。账号资料和业务历史会保留；切换未完成时仍保留原环境。
-          </p>
-          <div class="account-settings-actions">
-            <button
-              class="secondary-button small-button"
-              type="button"
-              disabled={state.pending || disabled}
-              onClick={() => setTarget(undefined)}
-            >
-              返回
-            </button>
-            <button
-              class="small-button"
-              type="button"
-              disabled={state.pending || disabled}
-              onClick={() => {
-                void controller.current?.begin(target);
-                setTarget(undefined);
-              }}
-            >
-              开始重新登录
-            </button>
-          </div>
+          <SettingsEditor
+            actions={
+              <>
+                <button
+                  class="secondary-button small-button"
+                  type="button"
+                  disabled={state.pending || disabled}
+                  onClick={() => setTarget(undefined)}
+                >
+                  返回
+                </button>
+                <button
+                  class="small-button"
+                  type="button"
+                  disabled={state.pending || disabled}
+                  onClick={() => {
+                    void controller.current?.begin(target);
+                    setTarget(undefined);
+                  }}
+                >
+                  开始重新登录
+                </button>
+              </>
+            }
+          >
+            <strong>切换到{targetName}</strong>
+            <p>
+              请在新窗口重新登录同一个平台账号。账号资料和业务历史会保留；切换未完成时仍保留原环境。
+            </p>
+          </SettingsEditor>
         </div>
       )}
       {!target && (environment?.blockingReason || state.operation || error) && (
@@ -183,7 +176,7 @@ export function AccountBrowserSettings({
           {error && <p role="alert">{error}</p>}
           {(needsSetup ||
             (state.operation?.error?.code === "cleanup" && !active)) && (
-            <div class="account-settings-actions">
+            <div class="settings-actions">
               {needsSetup && (
                 <button
                   class="secondary-button small-button"
@@ -209,6 +202,6 @@ export function AccountBrowserSettings({
           )}
         </div>
       )}
-    </section>
+    </SettingsSection>
   );
 }

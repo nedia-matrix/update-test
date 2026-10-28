@@ -1,3 +1,4 @@
+import { PlatformSyncError } from "@nedia-matrix/platform-sdk";
 import {
   resolvePlatformSettings,
   type PlatformSettings,
@@ -404,7 +405,11 @@ export class AccountService {
     const { account } = this.resolveAccount(request);
     this.assertAvailable(account.id);
     if (account.lifecycle !== "active" || account.externalAccountId === null) {
-      throw new Error("请先完成平台账号登录识别");
+      throw new PlatformSyncError({
+        code: "authentication",
+        message: "请先完成平台账号登录识别",
+        retryable: false,
+      });
     }
     const platform = resolveAccountPlatform(
       this.dependencies.platforms,
@@ -417,7 +422,12 @@ export class AccountService {
     );
     try {
       const accountProfile = platform.accountProfile;
-      if (!accountProfile) throw new Error("该平台暂不支持账号资料刷新");
+      if (!accountProfile)
+        throw new PlatformSyncError({
+          code: "unsupported",
+          message: "该平台暂不支持账号资料刷新",
+          retryable: false,
+        });
       const profile = await this.withVerificationTransition(
         account.id,
         async () => {
@@ -451,11 +461,17 @@ export class AccountService {
               detected,
             );
             if (verified.status !== "authenticated") {
-              throw new Error(
-                verified.status === "login_required"
-                  ? "平台账号未登录"
-                  : verified.reason,
-              );
+              throw new PlatformSyncError({
+                code:
+                  verified.status === "login_required"
+                    ? "authentication"
+                    : "verification_required",
+                message:
+                  verified.status === "login_required"
+                    ? "平台账号未登录"
+                    : verified.reason,
+                retryable: false,
+              });
             }
             this.reportDiagnostic(trace, {
               component: "account",
@@ -469,7 +485,19 @@ export class AccountService {
             });
             return result;
           } finally {
-            await verification.close();
+            try {
+              await verification.close();
+            } catch (error) {
+              throw new PlatformSyncError(
+                {
+                  code: "resource_close_failed",
+                  message: "资料同步页面关闭失败",
+                  retryable: false,
+                  resourcesClosed: false,
+                },
+                { cause: error },
+              );
+            }
           }
         },
       );
@@ -479,7 +507,11 @@ export class AccountService {
         current.identityScheme !== account.identityScheme ||
         current.externalAccountId !== account.externalAccountId
       ) {
-        throw new Error("账号身份在资料刷新期间发生变化");
+        throw new PlatformSyncError({
+          code: "identity_mismatch",
+          message: "账号身份在资料刷新期间发生变化",
+          retryable: false,
+        });
       }
       const aggregate = PlatformAccount.rehydrate(current);
       aggregate.updateProfile(profileItems(profile), this.now().toISOString());

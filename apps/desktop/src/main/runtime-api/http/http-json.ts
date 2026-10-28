@@ -7,6 +7,7 @@ export function writeJson(
   status: number,
   value: unknown,
 ): void {
+  if (response.destroyed) return;
   response.statusCode = status;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.setHeader("Cache-Control", "no-store");

@@ -1,4 +1,10 @@
+import {
+  SettingsSection,
+  SettingsHeader,
+  SettingsEditor,
+} from "./settings-primitives.js";
 import { useEffect, useState } from "preact/hooks";
+import { SettingsDisclosure } from "./settings-disclosure.js";
 import type { ApplicationUpdateState } from "../../../bridge/contracts.js";
 import { updateErrorMessage } from "../application-update-errors.js";
 import { DEFAULT_UPDATE_SOURCE_URL } from "../../../bridge/update-source.js";
@@ -6,6 +12,7 @@ import { DEFAULT_UPDATE_SOURCE_URL } from "../../../bridge/update-source.js";
 export function ApplicationUpdateSettings() {
   const [state, setState] = useState<ApplicationUpdateState | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [sourceError, setSourceError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [sourceUrl, setSourceUrl] = useState(DEFAULT_UPDATE_SOURCE_URL);
   const [savedSourceUrl, setSavedSourceUrl] = useState(
@@ -53,10 +60,14 @@ export function ApplicationUpdateSettings() {
     };
   }, []);
 
-  const run = async (operation: () => Promise<unknown>) => {
+  const run = async (
+    operation: () => Promise<unknown>,
+    editingSource = false,
+  ) => {
     const previousRevision = state?.revision;
     setActionPending(true);
     setActionError(null);
+    if (editingSource) setSourceError(null);
     try {
       await operation();
     } catch (error) {
@@ -71,7 +82,7 @@ export function ApplicationUpdateSettings() {
             ? snapshot
             : previous,
         );
-      setActionError(
+      (editingSource ? setSourceError : setActionError)(
         snapshot?.error &&
           previousRevision !== undefined &&
           snapshot.revision > previousRevision
@@ -82,6 +93,7 @@ export function ApplicationUpdateSettings() {
       setActionPending(false);
     }
   };
+  const runSource = (operation: () => Promise<unknown>) => run(operation, true);
   const busy =
     state?.phase === "checking" ||
     state?.phase === "downloading" ||
@@ -102,18 +114,13 @@ export function ApplicationUpdateSettings() {
     });
 
   return (
-    <section class="settings-surface" aria-labelledby="software-update-title">
-      <header class="settings-section-header">
-        <div>
-          <h2 id="software-update-title">软件更新</h2>
-          <p>检查新版本并管理软件更新地址。</p>
-        </div>
-      </header>
-      <div class="update-settings-body">
-        <div class="update-settings-overview">
-          <div class="update-settings-summary">
+    <SettingsSection aria-labelledby="software-update-title">
+      <SettingsHeader
+        title="软件更新"
+        titleId="software-update-title"
+        summary={
+          <>
             <div class="update-version">
-              <strong>当前版本</strong>
               <small>{state ? `v${state.currentVersion}` : "正在读取…"}</small>
               {state?.latestVersion && (
                 <span class="update-latest-version">
@@ -127,7 +134,7 @@ export function ApplicationUpdateSettings() {
               <div class="update-settings-feedback">
                 {feedback && (
                   <p
-                    class={`update-check-feedback${state?.error || actionError ? " update-check-error" : ""}`}
+                    class={`settings-feedback${state?.error || actionError ? " settings-feedback-error" : ""}`}
                     role={state?.error || actionError ? "alert" : "status"}
                   >
                     {feedback}
@@ -150,8 +157,10 @@ export function ApplicationUpdateSettings() {
                 )}
               </div>
             )}
-          </div>
-          <div class="update-settings-actions">
+          </>
+        }
+        actions={
+          <div class="settings-actions">
             <button
               class="secondary-button compact-button"
               type="button"
@@ -239,18 +248,89 @@ export function ApplicationUpdateSettings() {
               </button>
             )}
           </div>
-        </div>
-        <div class="update-source-settings">
-          <div class="update-source-copy">
-            <label class="update-source-label" for="update-source-url">
-              更新地址
-            </label>
-            <p id="update-source-hint">支持 GitHub 仓库或更新清单地址。</p>
-          </div>
-          <div class="update-source-controls">
+        }
+      />
+      <div class="update-settings-body">
+        <SettingsDisclosure
+          title="更新地址"
+          description="支持 GitHub 仓库或更新清单地址"
+          descriptionId="update-source-hint"
+          summary={savedSourceUrl}
+          dirty={sourceLoaded && sourceChanged}
+        >
+          <SettingsEditor
+            actions={
+              <>
+                <button
+                  type="button"
+                  class="secondary-button compact-button"
+                  disabled={
+                    !sourceLoaded ||
+                    !state ||
+                    busy ||
+                    actionPending ||
+                    !sourceCanReset
+                  }
+                  onClick={() =>
+                    void runSource(async () => {
+                      const preferences = await window.matrix.updatePreferences(
+                        {
+                          updates: { sourceUrl: null },
+                        },
+                      );
+                      const nextSourceUrl =
+                        preferences.updates.sourceUrl ??
+                        DEFAULT_UPDATE_SOURCE_URL;
+                      setSourceUrl(nextSourceUrl);
+                      setSavedSourceUrl(nextSourceUrl);
+                    })
+                  }
+                >
+                  恢复默认
+                </button>
+                <button
+                  type="button"
+                  class="secondary-button compact-button"
+                  disabled={
+                    !sourceLoaded ||
+                    !state ||
+                    busy ||
+                    actionPending ||
+                    !sourceChanged
+                  }
+                  onClick={() =>
+                    void runSource(async () => {
+                      const preferences = await window.matrix.updatePreferences(
+                        {
+                          updates: { sourceUrl },
+                        },
+                      );
+                      const nextSourceUrl =
+                        preferences.updates.sourceUrl ??
+                        DEFAULT_UPDATE_SOURCE_URL;
+                      setSourceUrl(nextSourceUrl);
+                      setSavedSourceUrl(nextSourceUrl);
+                    })
+                  }
+                >
+                  保存
+                </button>
+              </>
+            }
+            feedback={
+              sourceError && (
+                <p
+                  class="settings-feedback settings-feedback-error"
+                  role="alert"
+                >
+                  {sourceError}
+                </p>
+              )
+            }
+          >
             <input
               id="update-source-url"
-              class="update-source-input"
+              aria-label="更新地址"
               type="url"
               aria-describedby="update-source-hint"
               spellcheck={false}
@@ -259,61 +339,9 @@ export function ApplicationUpdateSettings() {
               onInput={(event) => setSourceUrl(event.currentTarget.value)}
               placeholder={DEFAULT_UPDATE_SOURCE_URL}
             />
-            <div class="update-settings-actions">
-              <button
-                type="button"
-                class="secondary-button compact-button"
-                disabled={
-                  !sourceLoaded ||
-                  !state ||
-                  busy ||
-                  actionPending ||
-                  !sourceChanged
-                }
-                onClick={() =>
-                  void run(async () => {
-                    const preferences = await window.matrix.updatePreferences({
-                      updates: { sourceUrl },
-                    });
-                    const nextSourceUrl =
-                      preferences.updates.sourceUrl ??
-                      DEFAULT_UPDATE_SOURCE_URL;
-                    setSourceUrl(nextSourceUrl);
-                    setSavedSourceUrl(nextSourceUrl);
-                  })
-                }
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                class="secondary-button compact-button"
-                disabled={
-                  !sourceLoaded ||
-                  !state ||
-                  busy ||
-                  actionPending ||
-                  !sourceCanReset
-                }
-                onClick={() =>
-                  void run(async () => {
-                    const preferences = await window.matrix.updatePreferences({
-                      updates: { sourceUrl: null },
-                    });
-                    const nextSourceUrl =
-                      preferences.updates.sourceUrl ??
-                      DEFAULT_UPDATE_SOURCE_URL;
-                    setSourceUrl(nextSourceUrl);
-                    setSavedSourceUrl(nextSourceUrl);
-                  })
-                }
-              >
-                恢复默认
-              </button>
-            </div>
-          </div>
-        </div>
+          </SettingsEditor>
+        </SettingsDisclosure>
       </div>
-    </section>
+    </SettingsSection>
   );
 }

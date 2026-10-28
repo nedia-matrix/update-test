@@ -1,3 +1,8 @@
+import { platformSyncResponseError } from "@nedia-matrix/platform-sdk";
+import {
+  platformSyncFailure,
+  type PlatformSyncFailure,
+} from "@nedia-matrix/platform-sdk";
 import { isPlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 import {
   scrollForNextJsonResponse,
@@ -186,7 +191,7 @@ export const kuaishouAccountProfileCapability: PlatformAccountProfileCapability 
         ],
       );
       if (!response?.ok || response.body === null) {
-        throw new Error("快手账号资料响应未出现");
+        throw platformSyncResponseError(response, "快手账号资料响应未出现");
       }
       const primary = parseKuaishouAccountProfileResponse(response.body);
       if (
@@ -223,7 +228,7 @@ export const kuaishouContentCapability: PlatformContentCapability = {
       [{ method: "POST", url: CONTENT_API_URL, timeoutMs: 10_000 }],
     );
     if (!response?.ok || response.body === null) {
-      throw new Error("快手作品列表响应未出现");
+      throw platformSyncResponseError(response, "快手作品列表响应未出现");
     }
     const items = new Map<string, PlatformContentData>();
     let pagesRead = 0;
@@ -274,6 +279,7 @@ export const kuaishouContentCapability: PlatformContentCapability = {
           pagesRead,
           remoteTotal,
           `快手作品第 ${pagesRead + 1} 页同步停止（${error.userMessage}）`,
+          platformSyncFailure(error),
         );
       }
       const { scroll, response: nextResponse } = nextPage;
@@ -380,6 +386,7 @@ function partialContentResult(
   pagesRead: number,
   remoteTotal: number | undefined,
   diagnostic: string,
+  failure?: PlatformSyncFailure,
 ): PlatformContentReadResult {
   return {
     items: [...items.values()],
@@ -387,5 +394,6 @@ function partialContentResult(
     pagesRead,
     ...(remoteTotal === undefined ? {} : { remoteTotal }),
     diagnostics: [diagnostic],
+    ...(failure ? { failure } : {}),
   };
 }

@@ -1,3 +1,8 @@
+import { TaskStore } from "../scheduling/task-store.js";
+import { registerTaskIpc } from "../scheduling/register-task-ipc.js";
+import { RuntimeAccess } from "../runtime-api/security/runtime-access.js";
+import { SqliteRuntimeAccessStore } from "../runtime-api/security/sqlite-runtime-access-store.js";
+import { registerRuntimeAccessIpc } from "../runtime-api/ipc/register-runtime-access-ipc.js";
 import { resolvePlatformSettings } from "@nedia-matrix/platform-sdk";
 import { desktopPlugins } from "../plugins/desktop-plugins.js";
 import { createPlatformExecutionHost } from "../plugins/execution-host.js";
@@ -26,7 +31,8 @@ import {
   PublishingService,
   toPublishResultUpdate,
 } from "@nedia-matrix/publishing";
-import { app, dialog } from "electron";
+import { app, dialog, ipcMain } from "electron";
+import { ipcChannels } from "../../bridge/channels.js";
 import { openDesktopMetadata } from "../persistence/open-desktop-metadata.js";
 import { DesktopDiagnosticTraceService } from "../diagnostics/desktop-diagnostic-trace-service.js";
 import { registerDiagnosticIpc } from "../diagnostics/ipc/register-diagnostic-ipc.js";
@@ -469,6 +475,7 @@ export class DesktopRuntime {
       diagnostics: this.diagnostics,
     });
     const dependencies = {
+      taskStore: new TaskStore(this.metadata.database),
       platforms: desktopPlatformCatalog,
       runtime: {
         status: () =>
@@ -620,45 +627,28 @@ export class DesktopRuntime {
           }
         },
       },
-      notices: new ElectronAutomationNotices(
-        async (accountId) => {
-          const account = this.accountStore.get(accountId);
-          if (!account) return;
-          const lease = this.accountPublications.acquire(accountId);
-          if (!lease) throw new Error("Account has an active publication");
-          try {
-            await this.browserSessions.closeAutomation(account);
-          } finally {
-            lease.release();
-          }
-        },
-        (notice, event, error) => {
-          const trace = this.diagnostics.start({
-            operation: "automation.notice",
-            accountId: notice.accountId,
-            ...(notice.kind.startsWith("publish.") &&
-            "publicationId" in notice &&
-            notice.publicationId
-              ? { requestId: notice.publicationId }
-              : {}),
-          });
-          if ("publicationId" in notice && notice.publicationId) {
-            trace.bind({ publicationId: notice.publicationId });
-          }
-          trace.report({
-            component: "shell",
-            event,
-            level: event === "notice.failed" ? "error" : "info",
-            details: {
-              kind: notice.kind,
-              ...(error instanceof Error ? { errorName: error.name } : {}),
-            },
-          });
-          trace.finish({
-            outcome: event === "notice.failed" ? "failed" : "completed",
-          });
-        },
-      ),
+      notices: new ElectronAutomationNotices((notice, event, error) => {
+        const trace = this.diagnostics.start({
+          operation: "automation.notice",
+          accountId: notice.accountId,
+          ...(notice.publicationId ? { requestId: notice.publicationId } : {}),
+        });
+        if (notice.publicationId) {
+          trace.bind({ publicationId: notice.publicationId });
+        }
+        trace.report({
+          component: "shell",
+          event,
+          level: event === "notice.failed" ? "error" : "info",
+          details: {
+            kind: notice.kind,
+            ...(error instanceof Error ? { errorName: error.name } : {}),
+          },
+        });
+        trace.finish({
+          outcome: event === "notice.failed" ? "failed" : "completed",
+        });
+      }),
       automationDiagnostics: this.diagnostics,
       archiveDiagnostics: {
         report: ({
@@ -773,6 +763,10 @@ export class DesktopRuntime {
       },
       eventSink: {
         publish: (event) => {
+          if (event.type === "tasks.changed") {
+            this.mainWindow.sendTasksChanged();
+            this.localRuntimeServer?.publishTasksChanged();
+          }
           if (event.type === "accounts.changed") {
             this.mainWindow.sendAccountsChanged();
             this.localRuntimeServer?.publishAccountsChanged();
@@ -817,6 +811,27 @@ export class DesktopRuntime {
     registerAccountBrowserSwitchIpc(this.accountBrowserSwitch);
     void this.application.accounts.cleanupRetiredProfiles().catch(() => {
       console.error("Failed to clean up retired browser profiles");
+    });
+    registerTaskIpc(this.application);
+    ipcMain.handle(ipcChannels.restartForPluginChanges, () => {
+      if (
+        !desktopPlugins()
+          .list()
+          .some(
+            (plugin) =>
+              plugin.pending === "enable" ||
+              plugin.pending === "disable" ||
+              plugin.pending === "remove",
+          )
+      )
+        throw new Error("没有待重启的启用、停用或卸载操作");
+      if (
+        this.updateInstallInProgress ||
+        this.updateCleanupFailed ||
+        this.lifecycle.requestWindowOpen() !== "open-now"
+      )
+        throw new Error("应用正在安装更新或退出，请稍后重试");
+      this.requestQuit(true);
     });
     registerAccountIpcHandlers(this.application, this.browserSessions);
     registerPlatformContentIpcHandlers(this.application);
@@ -925,6 +940,7 @@ export class DesktopRuntime {
 
     this.registerCustomProtocol();
     this.localRuntimeServer = this.createLocalRuntimeServer(this.application);
+    this.application.startScheduling();
     registerRuntimeStatusIpcHandler(this.application);
     const runtimeTrace = this.diagnostics.start({
       operation: "runtime.listen",
@@ -988,7 +1004,7 @@ export class DesktopRuntime {
     this.mainWindow.open();
   }
 
-  requestQuit(): void {
+  requestQuit(restart = false): void {
     if (this.updateCleanupFailed) {
       // No installation permit was submitted. Exit without closing a possibly busy database.
       app.exit(1);
@@ -1053,6 +1069,12 @@ export class DesktopRuntime {
         // Exit synchronously after closing: no async cleanup callback may run
         // against the closed connection. Interrupted work recovers next launch.
         this.metadata.database.close();
+        if (restart) {
+          const portableExecutable = process.env.PORTABLE_EXECUTABLE_FILE;
+          app.relaunch(
+            portableExecutable ? { execPath: portableExecutable } : {},
+          );
+        }
         app.exit(0);
       });
   }
@@ -1074,7 +1096,13 @@ export class DesktopRuntime {
   private createLocalRuntimeServer(
     application: NediaMatrixApplication,
   ): LocalRuntimeHttpServer {
-    return new LocalRuntimeHttpServer({
+    const access = new RuntimeAccess(
+      new SqliteRuntimeAccessStore(this.metadata.database),
+      readLocalRuntimePort(process.env.MATRIX_RUNTIME_PORT),
+    );
+    application.setRuntimeTaskAccess((accountId) => access.allowed(accountId));
+    const server = new LocalRuntimeHttpServer({
+      access,
       application,
       diagnostics: this.diagnostics,
       port: readLocalRuntimePort(process.env.MATRIX_RUNTIME_PORT),
@@ -1094,8 +1122,12 @@ export class DesktopRuntime {
           platformIdentityAddressing: true,
           platformContentSnapshots: true,
           platformContentSync: true,
+          queuedPublications: true,
+          taskHistoryRetention: true,
         },
       },
     });
+    registerRuntimeAccessIpc(application, server, access);
+    return server;
   }
 }

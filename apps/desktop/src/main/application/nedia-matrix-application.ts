@@ -1,3 +1,6 @@
+import { TaskCoordinator } from "../scheduling/task-coordinator.js";
+import type { TaskStore } from "../scheduling/task-store.js";
+import type { TaskUseCases } from "../../bridge/tasks.js";
 import { samePlatform } from "@nedia-matrix/platform-sdk";
 import { randomUUID } from "node:crypto";
 
@@ -98,6 +101,7 @@ export interface PlatformContentUseCases {
 }
 
 export interface NediaMatrixUseCases {
+  readonly tasks?: TaskUseCases;
   readonly platforms: PlatformRegistry;
   readonly platformSummaries: () => PlatformSummary[];
   readonly accounts: AccountUseCases;
@@ -113,6 +117,7 @@ export interface NediaMatrixUseCases {
 }
 
 export type NediaMatrixApplicationEvent =
+  | { type: "tasks.changed" }
   | { type: "accounts.changed" }
   | { type: "publication.changed"; publicationId: string };
 
@@ -121,6 +126,7 @@ export interface DesktopEventSink {
 }
 
 interface NediaMatrixApplicationDependencies {
+  taskStore?: TaskStore;
   platforms: PlatformRegistry;
   createProfileId?: (platformId: string, accountId: string) => string;
   runtime: RuntimeUseCases;
@@ -130,6 +136,7 @@ interface NediaMatrixApplicationDependencies {
   browserSessions: PublicationApplicationDependencies["browser"] &
     Omit<BrowserSessionPort, "openForVerification"> & {
       hasPublicationPage?(publicationId: string): boolean;
+      isBrowserUnderMaintenance?(): boolean;
       isAccountBrowserBusy?(accountId: string, profileId: string): boolean;
       hasAnyPublicationPage?(): boolean;
       openForVerification(
@@ -184,6 +191,8 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
   private readonly publishing: PublicationService;
   private readonly archiveMaintenance: PublicationArchiveMaintenance;
   private readonly contentSync: PlatformContentService;
+  private coordinator?: TaskCoordinator;
+  readonly tasks?: TaskUseCases;
 
   readonly accounts: AccountUseCases;
   readonly platforms: PlatformRegistry;
@@ -216,9 +225,17 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       sessionDetector,
       isAccountBusy: (accountId) =>
         dependencies.accountPublications.isActive(accountId) ||
-        this.accountActivity.isSwitching(accountId),
-      assertAccountAvailable: (accountId) =>
-        this.accountActivity.assertAvailable(accountId),
+        this.accountActivity.isSwitching(accountId) ||
+        (!!this.coordinator?.scheduler.isBusy(accountId) &&
+          !this.coordinator.owns(accountId)),
+      assertAccountAvailable: (accountId) => {
+        this.accountActivity.assertAvailable(accountId);
+        if (
+          this.coordinator?.scheduler.isBusy(accountId) &&
+          !this.coordinator.owns(accountId)
+        )
+          throw new Error("账号存在执行中的任务");
+      },
       onAccountsChanged: () =>
         dependencies.eventSink?.publish({ type: "accounts.changed" }),
       diagnostics: dependencies.automationDiagnostics,
@@ -283,6 +300,7 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       dependencies.publicationArchiveAssets,
       {
         hasActiveTask: (publicationId) => {
+          if (this.coordinator?.protectsPublication(publicationId)) return true;
           const publication = dependencies.publishing.get(publicationId);
           return publication
             ? dependencies.accountPublications.isActive(
@@ -295,8 +313,11 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
             : false;
         },
         hasActiveAssetUsers: () =>
+          !!this.coordinator?.hasProtectedAssets() ||
           (dependencies.accountPublications.hasAnyActive?.() ?? false) ||
           (dependencies.browserSessions.hasAnyPublicationPage?.() ?? false),
+        additionalReferencedPaths: () =>
+          this.coordinator?.protectedPaths() ?? new Set<string>(),
         now: dependencies.now ?? (() => new Date()),
       },
       dependencies.archiveDiagnostics,
@@ -333,6 +354,7 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
         },
       },
       repository: dependencies.platformContents,
+      preserveMissing: !!dependencies.taskStore,
       createId,
       now: dependencies.now ?? (() => new Date()),
       automationDiagnostics: dependencies.automationDiagnostics,
@@ -476,6 +498,79 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
         return this.contentSync.refresh(account.id);
       },
     };
+    if (dependencies.taskStore) {
+      this.coordinator = new TaskCoordinator({
+        store: dependencies.taskStore,
+        accounts: this.accountApplication,
+        content: this.contentSync,
+        publications: this.publishing,
+        ports: {
+          accounts: dependencies.accountStore,
+          platforms: dependencies.platforms,
+          publishing: dependencies.publishing,
+          accountPublications: dependencies.accountPublications,
+          mediaSelections: dependencies.mediaSelections,
+          remoteAssets: dependencies.remoteAssets,
+        },
+        wasDeleted: (requestId) =>
+          dependencies.publicationArchive.isDeletedRequestId?.(requestId) ??
+          false,
+        resolveAsset: (path) =>
+          dependencies.publicationArchiveAssets.resolvePath?.(path) ??
+          Promise.resolve(undefined),
+        canStart: (accountId) =>
+          !dependencies.browserSessions.isBrowserUnderMaintenance?.() &&
+          !this.accountActivity.isBusy(accountId) &&
+          !dependencies.accountPublications.isActive(accountId) &&
+          !this.accountApplication.hasActiveOperation(accountId),
+        changed: () =>
+          dependencies.eventSink?.publish({ type: "tasks.changed" }),
+        onError: (error) =>
+          console.error("Task scheduler stopped safely", error),
+      });
+      this.tasks = this.commands.guard(this.coordinator.scheduler);
+      const coordinator = this.coordinator;
+      this.accounts = {
+        ...this.accounts,
+        refreshProfile: async (request) => {
+          const task = coordinator.scheduler.enqueueSync({
+            accountId: request.accountId,
+            type: "account_profile_sync",
+          });
+          return (await coordinator.scheduler.wait(task.id)) as Awaited<
+            ReturnType<AccountUseCases["refreshProfile"]>
+          >;
+        },
+      };
+      this.platformContents = {
+        ...this.platformContents,
+        refresh: async (accountId) => {
+          const task = coordinator.scheduler.enqueueSync({
+            accountId,
+            type: "platform_content_sync",
+          });
+          return (await coordinator.scheduler.wait(
+            task.id,
+          )) as PlatformContentSyncRun;
+        },
+        refreshByExternalIdentity: async (request) => {
+          const account =
+            this.accountApplication.resolveByExternalIdentity(request);
+          const task = coordinator.scheduler.enqueueSync(
+            { accountId: account.id, type: "platform_content_sync" },
+            "runtime",
+          );
+          return (await coordinator.scheduler.wait(
+            task.id,
+          )) as PlatformContentSyncRun;
+        },
+      };
+      this.publications = {
+        ...this.publications,
+        prepare: async (request) => coordinator.enqueueLocal(request),
+        prepareRemote: (request) => coordinator.enqueueRemote(request),
+      };
+    }
     const requestAccount = (args: unknown[]) => {
       const request = args[0] as
         | {
@@ -504,7 +599,7 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
         "openLogin",
         "open",
         "refresh",
-        "refreshProfile",
+        ...(dependencies.taskStore ? [] : ["refreshProfile"]),
         "verify",
         "verifyByExternalIdentity",
         "remove",
@@ -520,7 +615,9 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
             String(key),
           )
         )
-          return requestAccount(args);
+          return dependencies.taskStore && key !== "registerLocalMedia"
+            ? undefined
+            : requestAccount(args);
         if (key === "openReview") {
           const request = args[0] as { publicationId: string };
           return this.publishing.getTask(request.publicationId)?.accountId;
@@ -531,11 +628,13 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     this.platformContents = this.accountActivity.guard(
       this.platformContents,
       (key, args) =>
-        key === "refresh"
-          ? String(args[0])
-          : key === "refreshByExternalIdentity"
-            ? requestAccount(args)
-            : undefined,
+        dependencies.taskStore
+          ? undefined
+          : key === "refresh"
+            ? String(args[0])
+            : key === "refreshByExternalIdentity"
+              ? requestAccount(args)
+              : undefined,
     );
     this.accounts = this.commands.guard(this.accounts);
     this.publications = this.commands.guard(this.publications);
@@ -549,20 +648,48 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     this.commands.assertRunning();
     if (
       this.publicationBusy(accountId) ||
-      this.accountApplication.hasActiveOperation(accountId)
+      this.accountApplication.hasActiveOperation(accountId) ||
+      !!this.coordinator?.scheduler.isBusy(accountId)
     )
       throw new Error("账号正在识别或刷新身份，请稍后再切换");
     return this.accountActivity.acquireSwitch(accountId);
   }
 
-  freezeForUpdate(): () => void {
-    if (this.accountActivity.hasAnySwitch())
-      throw new Error("请先完成或取消账号环境切换");
-    return this.commands.freezeForUpdate();
+  startScheduling(): void {
+    this.coordinator?.scheduler.start();
   }
 
-  stopCommands(): Promise<void> {
-    return this.commands.stop();
+  setRuntimeTaskAccess(allowed: (accountId: string) => boolean): void {
+    this.coordinator?.setRuntimeAccess(allowed);
+  }
+
+  revokeRuntimeTasks(accountId: string): void {
+    this.coordinator?.scheduler.cancelRuntime(accountId);
+  }
+
+  freezeForUpdate(): () => void {
+    if (this.coordinator?.scheduler.hasOccupied())
+      throw new Error("存在活动任务，请先完成后再安装");
+    if (this.accountActivity.hasAnySwitch())
+      throw new Error("请先完成或取消账号环境切换");
+    const resumeDispatch = this.coordinator?.scheduler.pauseDispatch();
+    try {
+      const resumeCommands = this.commands.freezeForUpdate();
+      return () => {
+        resumeCommands();
+        resumeDispatch?.();
+      };
+    } catch (error) {
+      resumeDispatch?.();
+      throw error;
+    }
+  }
+
+  async stopCommands(): Promise<void> {
+    // Freeze public commands synchronously before draining worker executions.
+    const commandsStopped = this.commands.stop();
+    await this.coordinator?.stop();
+    await commandsStopped;
   }
 
   private requirePublicationContent(

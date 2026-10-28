@@ -27,6 +27,7 @@ export class RequestPacer {
       throw new PlatformDataOperationError(
         "rate_limited",
         `platform_rate_limited(retry_after_ms=${this.cooldownUntil - Date.now()})`,
+        { retryAfterMs: Math.max(0, this.cooldownUntil - Date.now()) },
       );
   }
   async run<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {

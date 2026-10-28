@@ -1,3 +1,4 @@
+import { platformSyncResponseError } from "@nedia-matrix/platform-sdk";
 import { navigateForJsonResponses } from "@nedia-matrix/platform-sdk";
 import type {
   PlatformAccountProfileCapability,
@@ -171,7 +172,10 @@ export const douyinAccountProfileCapability: PlatformAccountProfileCapability =
         url: PROFILE_URL,
       });
       if (!response.ok || response.body === null) {
-        throw new Error(`抖音账号资料请求失败（HTTP ${response.status}）`);
+        throw platformSyncResponseError(
+          response,
+          `抖音账号资料请求失败（HTTP ${response.status}）`,
+        );
       }
       return parseDouyinAccountProfile(response.body);
     },

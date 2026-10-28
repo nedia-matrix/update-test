@@ -1,3 +1,7 @@
+import {
+  SettingsSection,
+  SettingsHeader,
+} from "../components/settings-primitives.js";
 import type {
   PlatformAccountInfoKey,
   PlatformAccountView,
@@ -48,9 +52,6 @@ export function AccountsPage({
   >();
   const [browserSwitchBusy, setBrowserSwitchBusy] = useState(false);
   const [submissionBusy, setSettingsBusy] = useState(false);
-  const [contentRefreshToken, setContentRefreshToken] = useState(0);
-
-  useEffect(() => setActiveTab("overview"), [account?.id]);
 
   useEffect(
     () =>
@@ -92,12 +93,11 @@ export function AccountsPage({
       }
       if (action === "refresh") {
         context.setStatus("正在从平台刷新账号资料…", "busy");
-        await window.matrix.refreshPlatformAccountProfile({
+        await window.matrix.tasks.enqueueSync({
           accountId: account.id,
+          type: "account_profile_sync",
         });
-        const refreshed = await context.refreshAccounts();
-        onAccountsChanged(refreshed, account.id);
-        context.setStatus("账号资料已更新");
+        context.setStatus("资料同步已受理，可在任务管理页面查看进度");
         return;
       }
       if (
@@ -122,20 +122,11 @@ export function AccountsPage({
     setBusyAction("contents");
     context.setStatus("正在从平台同步作品和最新指标…", "busy");
     try {
-      const run = await window.matrix.refreshPlatformContents({
+      await window.matrix.tasks.enqueueSync({
         accountId: account.id,
+        type: "platform_content_sync",
       });
-      setContentRefreshToken((current) => current + 1);
-      if (run.status === "failed") {
-        context.setStatus(run.diagnostics[0] ?? "平台作品同步失败", "error");
-      } else if (run.status === "partial") {
-        context.setStatus(
-          run.diagnostics[0] ?? `已读取 ${run.itemsRead} 条作品，结果不完整`,
-          "error",
-        );
-      } else {
-        context.setStatus(`已同步 ${run.itemsRead} 条平台作品`);
-      }
+      context.setStatus("作品同步已受理，可在任务管理页面查看进度");
     } catch (error) {
       context.setStatus(errorMessage(error, "平台作品同步失败"), "error");
     } finally {
@@ -156,7 +147,7 @@ export function AccountsPage({
           </span>
         </div>
       )}
-      <header class="workspace-header account-profile-header">
+      <header class="workspace-header">
         <AccountAvatar account={account} accountName={accountName} large />
         <div class="workspace-header-copy account-profile-copy">
           <div class="account-profile-name">
@@ -189,7 +180,11 @@ export function AccountsPage({
             onClick={() => void runAction("open")}
           >
             <AccountBrowserStatus status={browserStatus} compact />
-            打开平台
+            {browserStatus === "background"
+              ? "后台运行中"
+              : browserStatus === "window"
+                ? "运行中"
+                : "打开平台"}
           </button>
           <button
             class="secondary-button compact-button"
@@ -223,7 +218,7 @@ export function AccountsPage({
         </div>
       </header>
 
-      <nav class="workspace-tabs account-tabs" aria-label="账号内容">
+      <nav class="workspace-tabs" aria-label="账号内容">
         <button
           class={activeTab === "overview" ? "active" : undefined}
           type="button"
@@ -268,41 +263,34 @@ export function AccountsPage({
           profileId={account.profileId}
           onBusy={setBrowserSwitchBusy}
         />
-        <section
-          class="settings-surface account-removal-settings"
-          aria-label="移除账号"
-        >
-          <div class="account-settings-copy">
-            <h2>移除账号</h2>
-            <p>从本应用移除该账号及其本地登录数据，不会注销平台账号。</p>
-          </div>
-          <button
-            class="secondary-button small-button account-remove-button"
-            type="button"
-            disabled={
-              busyAction !== undefined || browserSwitchBusy || submissionBusy
+        <SettingsSection aria-label="移除账号">
+          <SettingsHeader
+            title="移除账号"
+            summary={<>移除本地账号及登录数据，保留平台账号。</>}
+            actions={
+              <button
+                class="secondary-button small-button account-remove-button"
+                type="button"
+                disabled={
+                  busyAction !== undefined ||
+                  browserSwitchBusy ||
+                  submissionBusy
+                }
+                onClick={() => void runAction("delete")}
+              >
+                <Icon name="delete" size={16} />
+                {busyAction === "delete" ? "移除中…" : "移除账号"}
+              </button>
             }
-            onClick={() => void runAction("delete")}
-          >
-            <Icon name="delete" size={16} />
-            {busyAction === "delete" ? "移除中…" : "移除账号"}
-          </button>
-        </section>
+          />
+        </SettingsSection>
       </div>
 
       {activeTab === "overview" && (
-        <AccountOverview
-          account={account}
-          context={context}
-          refreshToken={contentRefreshToken}
-        />
+        <AccountOverview account={account} context={context} />
       )}
       {activeTab === "contents" && (
-        <PlatformContentsPage
-          context={context}
-          fixedAccountId={account.id}
-          refreshToken={contentRefreshToken}
-        />
+        <PlatformContentsPage context={context} fixedAccountId={account.id} />
       )}
     </div>
   );
@@ -410,12 +398,16 @@ export function AddAccountDialog({
 function AccountOverview({
   account,
   context,
-  refreshToken,
 }: {
   account: PlatformAccountView;
   context: AppContext;
-  refreshToken: number;
 }) {
+  const [refreshToken, setRefreshToken] = useState(0);
+  useEffect(
+    () =>
+      window.matrix.onTasksChanged(() => setRefreshToken((value) => value + 1)),
+    [],
+  );
   const [contents, setContents] = useState<PlatformContentSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -471,7 +463,7 @@ function AccountOverview({
           value={accountInformation(account, "content_count")}
         />
       </section>
-      <section class="data-surface account-recent-content">
+      <section class="data-surface">
         <header class="surface-header">
           <div>
             <h2>最近内容</h2>

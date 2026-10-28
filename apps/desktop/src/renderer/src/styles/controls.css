@@ -1,0 +1,183 @@
+/* 基础控件共用外观与交互；业务样式仅调整布局、尺寸和语义变体。
+ * 聚焦不增加边框宽度或外圈阴影；按钮仅在键盘聚焦时显示 1px 提示。
+ */
+:root {
+  --control-height: 32px;
+  --control-height-small: 28px;
+  --control-radius: 6px;
+  --control-font-size: 0.75rem;
+}
+
+button,
+.button-link {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid var(--accent);
+  border-radius: var(--control-radius);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+  font-size: var(--control-font-size);
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+button:where(:hover:not(:disabled)),
+.button-link:where(:hover) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+.secondary-button {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.secondary-button:where(:hover:not(:disabled)) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+.primary-outline-button {
+  border-color: var(--accent);
+  background: transparent;
+  color: var(--accent);
+}
+.primary-outline-button:where(:hover:not(:disabled)) {
+  border-color: var(--accent-hover);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+.compact-button {
+  min-height: var(--control-height);
+  padding-inline: 11px;
+}
+.small-button {
+  min-height: var(--control-height-small);
+  padding-inline: 9px;
+  font-size: var(--control-font-size);
+}
+.icon-button {
+  width: 32px;
+  min-width: 32px;
+  min-height: var(--control-height);
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.icon-button:where(:hover:not(:disabled)) {
+  border-color: transparent;
+  background: var(--surface-active);
+  color: var(--text);
+}
+
+input:where(:not([type="checkbox"]):not([type="radio"])),
+select,
+textarea,
+.control-field {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height);
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--control-font-size);
+  line-height: 1.4;
+  outline: none;
+  box-shadow: none;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+}
+input:where(:not([type="checkbox"]):not([type="radio"])):where(
+    :hover:not(:disabled)
+  ),
+select:where(:hover:not(:disabled)),
+textarea:where(:hover:not(:disabled)),
+.control-field:where(:hover:not(:has(:disabled))) {
+  border-color: var(--text-tertiary);
+}
+input:where(:not([type="checkbox"]):not([type="radio"])):focus,
+select:focus,
+textarea:focus,
+.control-field:focus-within {
+  border-color: var(--accent);
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+textarea {
+  line-height: 1.6;
+  resize: vertical;
+}
+/* 带图标等前缀的组合控件，由外壳承担唯一的边框与聚焦状态。 */
+.control-field :is(input, select, textarea) {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border-radius: 7px;
+  background: var(--surface-active);
+}
+.segmented-control button {
+  min-height: 30px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+}
+.segmented-control button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--surface-hover);
+}
+.segmented-control button.active {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--accent);
+}

@@ -316,7 +316,11 @@ export function PublishPage({
         tags: requestedTags,
         submissionMode,
       });
-      if (result.status === "cancelled") {
+      if (result.status === "queued") {
+        context.setStatus("发布任务已受理，可在任务管理页面查看进度");
+        setMediaSelection(undefined);
+        globalThis.location.hash = `/tasks?taskId=${encodeURIComponent(result.taskId)}`;
+      } else if (result.status === "cancelled") {
         context.setStatus(result.message);
       } else if (result.status === "ready_for_review") {
         context.setRecreatedDraft(null);
@@ -426,7 +430,10 @@ export function PublishPage({
       {active &&
         headerActionsTarget &&
         createPortal(
-          <label class="publish-account-field" for="publish-account">
+          <label
+            class="control-field publish-account-field"
+            for="publish-account"
+          >
             <span class="publish-sr-only">发布账号</span>
             <PlatformIcon
               iconUrl={platform?.iconUrl}

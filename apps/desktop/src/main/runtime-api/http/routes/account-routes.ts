@@ -1,3 +1,5 @@
+import { RuntimeAccountAccess } from "../../security/runtime-account-access.js";
+import { writeAccessError } from "../../security/runtime-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { NediaMatrixUseCases } from "../../../application/nedia-matrix-application.js";
@@ -6,7 +8,10 @@ import { toRuntimeAccountSession } from "../../mapping/runtime-account-mapper.js
 import { readJsonRequest, writeJson } from "../http-json.js";
 
 export class RuntimeAccountRoutes {
-  constructor(private readonly application: NediaMatrixUseCases) {}
+  constructor(
+    private readonly application: NediaMatrixUseCases,
+    private readonly access = new RuntimeAccountAccess(application),
+  ) {}
 
   list(response: ServerResponse): void {
     writeJson(
@@ -14,6 +19,7 @@ export class RuntimeAccountRoutes {
       200,
       this.application.accounts
         .list()
+        .filter((account) => this.access.allowed(account.id))
         .map((account) => toRuntimeAccountSession(account)),
     );
   }
@@ -38,7 +44,9 @@ export class RuntimeAccountRoutes {
     runtimeAccountId: string,
   ): Promise<void> {
     try {
+      this.access.byId(runtimeAccountId);
       const body = await readJsonRequest(request);
+      this.access.byId(runtimeAccountId);
       const resolved = this.application.accounts.resolve({
         accountId: runtimeAccountId,
       });
@@ -61,6 +69,7 @@ export class RuntimeAccountRoutes {
       } else {
         await this.application.accounts.open({ accountId: runtimeAccountId });
       }
+      this.access.byId(runtimeAccountId);
       const current = this.application.accounts.resolve({
         accountId: runtimeAccountId,
       });
@@ -79,7 +88,9 @@ export class RuntimeAccountRoutes {
     runtimeAccountId: string,
   ): Promise<void> {
     try {
+      this.access.byId(runtimeAccountId);
       await this.application.accounts.refresh({ accountId: runtimeAccountId });
+      this.access.byId(runtimeAccountId);
       const resolved = this.application.accounts.resolve({
         accountId: runtimeAccountId,
       });
@@ -98,6 +109,7 @@ export class RuntimeAccountRoutes {
     runtimeAccountId: string,
   ): Promise<void> {
     try {
+      this.access.byId(runtimeAccountId);
       await this.application.accounts.remove({ accountId: runtimeAccountId });
       writeJson(response, 200, { removed: true, runtimeAccountId });
     } catch (error) {
@@ -106,6 +118,7 @@ export class RuntimeAccountRoutes {
   }
 
   private writeActionError(response: ServerResponse, error: unknown): void {
+    if (writeAccessError(response, error)) return;
     if (error instanceof AccountReplacedError) {
       writeJson(response, 409, {
         code: "ACCOUNT_REPLACED",

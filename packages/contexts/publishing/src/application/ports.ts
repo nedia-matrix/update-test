@@ -10,7 +10,6 @@ import type {
 
 import type {
   PublicationSnapshot,
-  PublicationAssetSnapshot,
   PublicationAttentionRepository,
   PublicationQuery,
   PublicationQueryResult,
@@ -373,9 +372,3 @@ export interface PublicationArchiveAssetStore {
   remove(relativePath: string): Promise<void>;
   resolvePath?(relativePath: string): Promise<string | undefined>;
 }
-
-export type PublicationAssetInput = Pick<
-  PublicationAssetSnapshot,
-  "name" | "size"
-> &
-  Partial<Omit<PublicationAssetSnapshot, "id" | "name" | "size">>;

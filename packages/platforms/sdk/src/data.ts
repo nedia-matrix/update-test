@@ -2,12 +2,14 @@
  * Cancellation, boundary violations and response validation errors are excluded.
  */
 export class PlatformDataOperationError extends Error {
+  readonly retryAfterMs?: number;
   constructor(
     readonly code: "rate_limited" | "request_failed" | "scroll_failed",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { retryAfterMs?: number },
   ) {
     super(message, options);
+    this.retryAfterMs = options?.retryAfterMs;
     this.name = "PlatformDataOperationError";
   }
   get userMessage(): string {
@@ -138,6 +140,7 @@ export interface PlatformContentData {
 }
 
 export interface PlatformContentReadResult {
+  readonly failure?: PlatformSyncFailure;
   readonly items: readonly PlatformContentData[];
   /** True only after reading the entire account inventory, never just a filtered or partial page set. */
   readonly complete: boolean;
@@ -176,4 +179,90 @@ export function isPlatformDataOperationError(
       String(error.code),
     )
   );
+}
+
+/** Stable application-facing sync failure; messages are presentation, never classifiers. */
+export interface PlatformSyncFailure {
+  code:
+    | "authentication"
+    | "identity_mismatch"
+    | "verification_required"
+    | "request_failed"
+    | "rate_limited"
+    | "scroll_failed"
+    | "unsupported"
+    | "persistence_failed"
+    | "resource_close_failed"
+    | "read_failed";
+  message: string;
+  retryable: boolean;
+  retryAfterMs?: number;
+  resourcesClosed?: boolean;
+}
+export class PlatformSyncError extends Error {
+  constructor(
+    readonly failure: PlatformSyncFailure,
+    options?: ErrorOptions,
+  ) {
+    super(failure.message, options);
+    this.name = "PlatformSyncError";
+  }
+}
+export function platformSyncFailure(error: unknown): PlatformSyncFailure {
+  if (error instanceof PlatformSyncError) return error.failure;
+  // Plugins may bundle their own SDK copy; preserve the structured failure across that boundary.
+  if (
+    error &&
+    typeof error === "object" &&
+    "name" in error &&
+    error.name === "PlatformSyncError" &&
+    "failure" in error
+  ) {
+    const failure = error.failure as PlatformSyncFailure;
+    if (
+      failure &&
+      typeof failure.code === "string" &&
+      typeof failure.message === "string" &&
+      typeof failure.retryable === "boolean"
+    )
+      return failure;
+  }
+  if (isPlatformDataOperationError(error))
+    return {
+      code: error.code,
+      message: error.userMessage,
+      retryable: error.code !== "scroll_failed",
+      ...(typeof (error as { retryAfterMs?: number }).retryAfterMs === "number"
+        ? { retryAfterMs: error.retryAfterMs }
+        : {}),
+    };
+  return {
+    code: "read_failed",
+    message: error instanceof Error ? error.message : "同步失败",
+    retryable: false,
+  };
+}
+
+/** Translate transport status without inspecting localized messages or response secrets. */
+export function platformSyncResponseError(
+  response:
+    Pick<PlatformJsonResponse, "status" | "retryAfterMs"> | null | undefined,
+  message: string,
+): PlatformSyncError {
+  const status = response?.status;
+  return new PlatformSyncError({
+    code:
+      status === 401
+        ? "authentication"
+        : status === 403
+          ? "verification_required"
+          : status === 429
+            ? "rate_limited"
+            : "request_failed",
+    message,
+    retryable: status !== 401 && status !== 403,
+    ...(response?.retryAfterMs === undefined
+      ? {}
+      : { retryAfterMs: response.retryAfterMs }),
+  });
 }

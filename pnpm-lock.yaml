@@ -216,28 +216,6 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.1.2)(vite@7.3.6(@types/node@26.1.2)(jiti@2.7.0))
 
-  packages/platforms/manifest:
-    dependencies:
-      '@nedia-matrix/automation-engine':
-        specifier: workspace:*
-        version: link:../../automation/engine
-      '@nedia-matrix/platform-sdk':
-        specifier: workspace:*
-        version: link:../sdk
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@nedia-matrix/tsconfig':
-        specifier: workspace:*
-        version: link:../../tooling/tsconfig
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-      vitest:
-        specifier: 'catalog:'
-        version: 4.1.10(@types/node@26.1.2)(vite@7.3.6(@types/node@26.1.2)(jiti@2.7.0))
-
   packages/platforms/sdk:
     dependencies:
       '@nedia-matrix/automation-engine':

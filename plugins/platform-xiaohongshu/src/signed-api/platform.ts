@@ -11,7 +11,13 @@ export const xhsSignPlatformModule = definePlatformModule({
     submissionMode: {
       type: "select",
       label: "发布提交方式",
-      options: [{ value: "automatic", label: "自动提交" }],
+      options: [
+        {
+          value: "automatic",
+          label: "自动提交",
+          description: "当前仅支持自动提交发布。",
+        },
+      ],
       default: "automatic",
     },
   },
