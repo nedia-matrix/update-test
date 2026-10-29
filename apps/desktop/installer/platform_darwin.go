@@ -91,3 +91,7 @@ func preserveQuarantine(source, current, staged string) error {
 	}
 	return nil
 }
+
+func validatePortableBackup(path string) error {
+	return errors.New("Windows backup inspection on macOS")
+}

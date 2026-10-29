@@ -597,6 +597,21 @@ func (i *Installer) recover() error {
 	}
 }
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--verify-portable-backup" {
+		path := os.Args[2]
+		err := canonical(path)
+		if err == nil {
+			err = regular(path)
+		}
+		if err == nil {
+			err = validatePortableBackup(path)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	recovery := len(os.Args) == 3 && os.Args[1] == "--recover"
 	if len(os.Args) != 2 && !recovery {
 		fmt.Fprintln(os.Stderr, "usage: nedia-update-helper [--recover] <request.json>")

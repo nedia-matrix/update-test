@@ -91,7 +91,9 @@ export class RuntimeAccess {
             !["http:", "https:"].includes(url.protocol) ||
             url.origin !== origin
           )
-            throw new TypeError("来源必须是完整的 HTTP(S) Origin，不包含路径");
+            throw new TypeError(
+              "网站来源必须包含协议和域名，可包含端口，但不能包含路径",
+            );
           return origin;
         }),
       ),
@@ -192,7 +194,7 @@ export class RuntimeAccess {
       !accountId ||
       typeof allowed !== "boolean"
     )
-      throw new TypeError("Invalid account access setting");
+      throw new TypeError("账号对外访问设置无效");
     this.store.setAllowed(accountId, allowed);
   }
 }

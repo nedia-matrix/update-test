@@ -160,7 +160,7 @@ export function AccountsPage({
           <p>
             {platform?.displayName ?? account.platformId}
             <span aria-hidden="true"> · </span>
-            {account.externalAccountId ?? "等待识别平台账号 ID"}
+            {account.externalAccountId ?? "等待识别平台账号标识"}
           </p>
           {accountDescription !== undefined && (
             <p class="account-profile-description">{accountDescription}</p>
@@ -314,7 +314,7 @@ export function AddAccountDialog({
   ) => {
     const operationKey = `${platformId}:${loginEntry.id}`;
     setBusyKey(operationKey);
-    context.setStatus(`正在创建 ${platformName} 独立 Session…`, "busy");
+    context.setStatus(`正在创建 ${platformName} 独立浏览器环境…`, "busy");
     try {
       const account = await window.matrix.createPlatformAccount({ platformId });
       const refreshed = await context.refreshAccounts();

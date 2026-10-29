@@ -84,37 +84,43 @@ function SyncRuleRow({
   const [hours, setHours] = useState(rule.intervalMs / 3_600_000);
   useEffect(() => setHours(rule.intervalMs / 3_600_000), [rule.intervalMs]);
   const description = !rule.enabled
-    ? "未启用，仅在应用运行期间执行。"
+    ? "未启用，启用后也仅在应用运行期间执行。"
     : rule.pausedReason
       ? `已暂停：${rule.pausedReason}`
       : `下次同步：${new Date(rule.nextDueAt).toLocaleString("zh-CN", { hour12: false })}。手动同步后顺延。`;
   return (
     <SettingsRow title={titles[rule.type]} description={description}>
       <div class="settings-actions sync-rule-controls">
-        <input
-          aria-label={`${rule.type === "account_profile_sync" ? "资料" : "作品"}同步周期（小时）`}
-          type="number"
-          min="1"
-          step="1"
-          value={hours}
-          disabled={pending || !rule.enabled}
-          onInput={(e) => setHours(Number(e.currentTarget.value))}
-        />
-        <span class="sync-rule-unit">小时 / 次</span>
-        <button
-          class="secondary-button compact-button"
-          type="button"
-          disabled={
-            pending ||
-            !rule.enabled ||
-            !Number.isFinite(hours) ||
-            hours < 1 ||
-            hours * 3_600_000 === rule.intervalMs
-          }
-          onClick={() => void save({ ...rule, intervalMs: hours * 3_600_000 })}
-        >
-          保存
-        </button>
+        {rule.enabled && (
+          <div class="sync-rule-period-editor">
+            <input
+              aria-label={`${rule.type === "account_profile_sync" ? "资料" : "作品"}同步周期（小时）`}
+              type="number"
+              min="1"
+              step="1"
+              value={hours}
+              disabled={pending || !rule.enabled}
+              onInput={(e) => setHours(Number(e.currentTarget.value))}
+            />
+            <span class="sync-rule-unit">小时 / 次</span>
+            <button
+              class="secondary-button compact-button"
+              type="button"
+              disabled={
+                pending ||
+                !rule.enabled ||
+                !Number.isFinite(hours) ||
+                hours < 1 ||
+                hours * 3_600_000 === rule.intervalMs
+              }
+              onClick={() =>
+                void save({ ...rule, intervalMs: hours * 3_600_000 })
+              }
+            >
+              保存
+            </button>
+          </div>
+        )}
         {rule.enabled && rule.pausedReason && (
           <button
             class="secondary-button compact-button"

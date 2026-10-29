@@ -226,7 +226,7 @@ export function TasksPage({ context }: { context: AppContext }) {
             {selected.source === "automatic"
               ? "自动规则"
               : selected.source === "runtime"
-                ? "Local Runtime"
+                ? "本地服务"
                 : "手动"}
             {selected.source === "automatic" && selected.hasManualRequest
               ? "，已关联手动请求"
@@ -470,7 +470,7 @@ export function TasksPage({ context }: { context: AppContext }) {
                     {task.source === "automatic"
                       ? "自动规则"
                       : task.source === "runtime"
-                        ? "Local Runtime"
+                        ? "本地服务"
                         : "手动触发"}
                   </small>
                 </span>

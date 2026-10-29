@@ -54,7 +54,7 @@ func validateExecutable(path string, r Request) error {
 		return errors.New("executable architecture mismatch")
 	}
 
-	return validateVersionResource(path, r)
+	return validateVersionResource(path, &r.Version)
 }
 func validateBundle(path string, r Request) error { return errors.New("macOS bundle on Windows") }
 func copyBundle(source, target string) error      { return errors.New("macOS bundle on Windows") }
@@ -83,7 +83,7 @@ func launchInstaller(target, directory string) error {
 }
 
 // Version resources identify the product as well as the architecture of its outer wrapper.
-func validateVersionResource(path string, r Request) error {
+func validateVersionResource(path string, version *string) error {
 	versionDLL := syscall.NewLazyDLL("version.dll")
 	file, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
@@ -116,15 +116,17 @@ func validateVersionResource(path string, r Request) error {
 	if fixed[0] != 0xFEEF04BD {
 		return errors.New("invalid executable version signature")
 	}
-	expected := strings.Split(r.Version, ".")
-	if len(expected) != 3 {
-		return errors.New("invalid requested version")
-	}
-	actual := []uint32{fixed[4] >> 16, fixed[4] & 65535, fixed[5] >> 16}
-	for index, part := range expected {
-		value, err := strconv.ParseUint(part, 10, 16)
-		if err != nil || uint32(value) != actual[index] {
-			return errors.New("executable product version mismatch")
+	if version != nil {
+		expected := strings.Split(*version, ".")
+		if len(expected) != 3 {
+			return errors.New("invalid requested version")
+		}
+		actual := []uint32{fixed[4] >> 16, fixed[4] & 65535, fixed[5] >> 16}
+		for index, part := range expected {
+			value, err := strconv.ParseUint(part, 10, 16)
+			if err != nil || uint32(value) != actual[index] {
+				return errors.New("executable product version mismatch")
+			}
 		}
 	}
 	translations, translationSize, err := query(`\VarFileInfo\Translation`)
@@ -147,3 +149,16 @@ func validateVersionResource(path string, r Request) error {
 }
 
 func preserveQuarantine(source, current, staged string) error { return nil }
+
+// Inspect version resources without executing the backup or requiring its old version.
+func validatePortableBackup(path string) error {
+	file, err := pe.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if file.Machine != pe.IMAGE_FILE_MACHINE_AMD64 && file.Machine != pe.IMAGE_FILE_MACHINE_I386 {
+		return errors.New("unsupported backup executable architecture")
+	}
+	return validateVersionResource(path, nil)
+}

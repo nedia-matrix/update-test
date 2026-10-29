@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -14,8 +14,9 @@ import {
   open,
   rename,
 } from "node:fs/promises";
-import { dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import type { UpdateArtifact } from "./update-manifest.js";
+import { isNewerVersion } from "./application-update.js";
 import { APPLICATION_ID } from "../../bridge/update-source.js";
 
 export interface InstallPackage {
@@ -225,7 +226,7 @@ export async function prepareInstallation(
   };
 }
 
-/** Only confirmed startup allows recycling the Windows portable backup. */
+/** Only confirmed startup allows recycling an application backup. */
 export async function recordUpdateStartup(
   context: InstallContext,
   completed: boolean,
@@ -235,7 +236,6 @@ export async function recordUpdateStartup(
   if (!context.packaged) return;
   const root = join(context.userData, "application-updates", "installations");
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  if (entries.length === 0) return;
   // An unavailable updater target must not prevent normal/manual application startup.
   let target: string;
   try {
@@ -318,94 +318,226 @@ export async function recordUpdateStartup(
       request.id,
       { mode: 0o600 },
     );
+  }
+  if (completed && trashItem) {
     if (
-      completed &&
-      context.platform === "win32" &&
-      context.distribution === "portable" &&
-      trashItem
+      (context.platform === "darwin" && context.distribution === "app-zip") ||
+      (context.platform === "win32" && context.distribution === "portable")
     )
-      await recyclePortableBackup(
-        directory,
-        request,
-        journal.backup,
-        trashItem,
-      );
+      await recycleApplicationBackups(context, target, trashItem);
+    if (
+      context.platform === "win32" &&
+      ["portable", "nsis"].includes(context.distribution)
+    )
+      await recycleWindowsUpdateFiles(context, target, trashItem);
   }
 }
 
 const recycling = new Map<string, Promise<void>>();
 
-function recyclePortableBackup(
-  directory: string,
-  request: InstallRequest,
-  recordedBackup: string | undefined,
+async function recycleApplicationBackups(
+  context: InstallContext,
+  target: string,
   trashItem: (file: string) => Promise<void>,
 ): Promise<void> {
-  const active = recycling.get(directory);
+  const parent = dirname(target);
+  const prefix = `${basename(target)}.nedia-backup-`;
+  const entries = await readdir(parent, { withFileTypes: true }).catch(
+    () => [],
+  );
+  for (const entry of entries) {
+    if (
+      (context.platform === "darwin"
+        ? !entry.isDirectory()
+        : !entry.isFile()) ||
+      !entry.name.startsWith(prefix) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        entry.name.slice(prefix.length),
+      )
+    )
+      continue;
+    const backup = join(parent, entry.name);
+    const active = recycling.get(backup);
+    if (active) {
+      await active;
+      continue;
+    }
+    const operation = (async () => {
+      try {
+        const info = await lstat(backup);
+        if (
+          (context.platform === "darwin"
+            ? !info.isDirectory()
+            : !info.isFile()) ||
+          info.isSymbolicLink() ||
+          (await realpath(backup)) !== backup
+        )
+          return;
+        if (context.platform === "darwin") {
+          const plist = join(backup, "Contents", "Info.plist");
+          const plistInfo = await lstat(plist);
+          if (
+            !plistInfo.isFile() ||
+            plistInfo.isSymbolicLink() ||
+            (await realpath(plist)) !== plist
+          )
+            return;
+          // plutil supports both XML and binary property lists. No journal is needed.
+          const appId = await new Promise<string>((resolve, reject) => {
+            execFile(
+              "/usr/bin/plutil",
+              ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plist],
+              { encoding: "utf8", timeout: 5_000, maxBuffer: 16_384 },
+              (error, stdout) =>
+                error ? reject(error) : resolve(stdout.trim()),
+            );
+          });
+          if (appId !== APPLICATION_ID) return;
+        } else {
+          // Run only the trusted helper bundled with the current application.
+          await new Promise<void>((resolve, reject) => {
+            execFile(
+              join(
+                context.resources,
+                "update-helper",
+                "nedia-update-helper.exe",
+              ),
+              ["--verify-portable-backup", backup],
+              { windowsHide: true, timeout: 5_000, maxBuffer: 16_384 },
+              (error) => (error ? reject(error) : resolve()),
+            );
+          });
+        }
+        await trashItem(backup);
+        if (
+          await lstat(backup).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          })
+        )
+          throw new Error("回收站操作后旧备份仍在原位置，等待下次启动重试");
+      } catch (error) {
+        // A cleanup failure must not prevent startup; the next healthy startup retries.
+        console.warn("Application backup could not be recycled", backup, error);
+      }
+    })().finally(() => recycling.delete(backup));
+    recycling.set(backup, operation);
+    await operation;
+  }
+}
+
+/** Recycle only updater-owned Windows payloads at or below the running version. */
+async function recycleWindowsUpdateFiles(
+  context: InstallContext,
+  target: string,
+  trashItem: (file: string) => Promise<void>,
+): Promise<void> {
+  const root = join(context.userData, "application-updates");
+  try {
+    if ((await realpath(root)) !== root) return;
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const match =
+        /^([0-9a-f]{64})-com\.nediamatrix\.desktop-(\d+\.\d+\.\d+)-win32-(x64)-(nsis|portable)-([0-9a-f]{64})$/.exec(
+          entry.name,
+        );
+      const version = match?.[2];
+      if (
+        !match ||
+        !version ||
+        match[3] !== context.arch ||
+        match[4] !== context.distribution ||
+        (version !== context.currentVersion &&
+          !isNewerVersion(context.currentVersion, version))
+      )
+        continue;
+      await recycleOwnedPath(join(root, entry.name), true, trashItem);
+    }
+    if (context.distribution !== "nsis") return;
+    const installations = join(root, "installations");
+    if ((await realpath(installations)) !== installations) return;
+    const records = await readdir(installations, { withFileTypes: true });
+    for (const entry of records) {
+      if (
+        !entry.isDirectory() ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          entry.name,
+        )
+      )
+        continue;
+      const directory = join(installations, entry.name);
+      if ((await realpath(directory)) !== directory) continue;
+      try {
+        const bytes = await readFile(join(directory, "journal.json"), "utf8");
+        if (bytes.length > 32_768) continue;
+        const journal = JSON.parse(bytes);
+        const request = journal.request as InstallRequest | undefined;
+        if (
+          !request ||
+          request.id !== entry.name ||
+          request.appId !== APPLICATION_ID ||
+          request.platform !== "win32" ||
+          request.distribution !== "nsis" ||
+          request.target !== target ||
+          request.arch !== context.arch ||
+          (request.version !== context.currentVersion &&
+            !isNewerVersion(context.currentVersion, request.version)) ||
+          ![
+            "completed",
+            "installer-starting",
+            "failed:installer-starting",
+          ].includes(journal.stage) ||
+          (await readFile(join(directory, "success"), "utf8")) !== request.id
+        )
+          continue;
+        // Keep the helper, handshake markers and diagnostic records for recovery/audit.
+        await recycleOwnedPath(join(directory, "setup.exe"), false, trashItem);
+      } catch (error) {
+        console.warn(
+          "Windows installer cleanup could not inspect a record",
+          directory,
+          error,
+        );
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+      console.warn("Windows update payload cleanup failed", error);
+  }
+}
+
+async function recycleOwnedPath(
+  path: string,
+  directory: boolean,
+  trashItem: (file: string) => Promise<void>,
+): Promise<void> {
+  const active = recycling.get(path);
   if (active) return active;
   const operation = (async () => {
-    const receipt = join(directory, "backup-recycle.json");
-    const backup = `${request.target}.nedia-backup-${request.id}`;
-    const previous = await readFile(receipt, "utf8").catch(() => "");
     try {
-      const result = JSON.parse(previous);
+      const info = await lstat(path);
       if (
-        result.status === "recycled" &&
-        result.id === request.id &&
-        result.backup === backup
+        info.isSymbolicLink() ||
+        (directory ? !info.isDirectory() : !info.isFile()) ||
+        (await realpath(path)) !== path
       )
         return;
-    } catch {
-      /* No completed receipt yet. */
-    }
-    let status = "recycled";
-    let error: string | undefined;
-    try {
-      // Derive the only permitted file instead of trusting a free-form journal path.
-      if (recordedBackup !== backup)
-        throw new Error("旧版备份路径与本次安装不一致，保留文件");
-      const info = await lstat(backup);
+      await trashItem(path);
       if (
-        !info.isFile() ||
-        info.isSymbolicLink() ||
-        (await realpath(backup)) !== backup
-      )
-        throw new Error("旧版备份不是预期的普通文件，保留文件");
-      await trashItem(backup);
-      if (
-        await lstat(backup).catch((cause: NodeJS.ErrnoException) => {
-          if (cause.code === "ENOENT") return null;
-          throw cause;
+        await lstat(path).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
         })
       )
-        throw new Error("回收站操作完成后旧备份仍在原位置，保留备份并等待重试");
-    } catch (cause) {
-      status = "failed";
-      error =
-        cause instanceof Error
-          ? cause.message
-          : "旧版备份移入回收站失败，保留备份";
-      console.warn(
-        "Portable update succeeded but old backup could not be recycled",
-        error,
-      );
+        throw new Error(
+          "Update payload remains after recycling; retry on next startup",
+        );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        console.warn("Update payload could not be recycled", path, error);
     }
-    // Cleanup has its own receipt: it must not turn a successfully installed update into failure.
-    await writeFile(
-      receipt,
-      JSON.stringify({
-        id: request.id,
-        backup,
-        status,
-        ...(error ? { error } : {}),
-      }),
-      { mode: 0o600 },
-    ).catch((cause: unknown) => {
-      console.warn("Failed to record portable backup recycling result", cause);
-    });
-  })().finally(() => {
-    recycling.delete(directory);
-  });
-  recycling.set(directory, operation);
+  })().finally(() => recycling.delete(path));
+  recycling.set(path, operation);
   return operation;
 }

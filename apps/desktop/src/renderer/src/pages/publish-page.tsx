@@ -400,7 +400,7 @@ export function PublishPage({
           <Icon name="accounts" size={24} />
         </span>
         <h2>先连接一个平台账号</h2>
-        <p>发布内容前，需要一个已登录的平台账号和独立 Session。</p>
+        <p>发布内容前，需要一个已登录的平台账号和独立浏览器环境。</p>
         <a class="button-link" href="#/accounts">
           前往账号管理
         </a>
@@ -894,7 +894,7 @@ function renderPublishResult(
     );
   } else if (update.status === "published") {
     const identity = update.platformContentId
-      ? `，作品 ID：${update.platformContentId}`
+      ? `，作品标识：${update.platformContentId}`
       : "";
     context.setStatus(`发布成功${identity}`);
   } else if (update.status === "failed") {

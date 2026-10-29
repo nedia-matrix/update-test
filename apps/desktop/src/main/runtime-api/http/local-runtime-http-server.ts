@@ -60,7 +60,7 @@ export class LocalRuntimeHttpServer {
   updateSettings(input: UpdateLocalRuntimeSettings): Promise<void> {
     return this.enqueueLifecycleOperation(async () => {
       const access = this.options.access;
-      if (!access) throw new Error("Runtime access settings unavailable");
+      if (!access) throw new Error("无法读取本地服务访问设置");
       const next = await access.prepare(input);
       const previousPort = this.boundPort ?? this.configuredPort;
       const running = this.boundPort !== null;
@@ -122,7 +122,7 @@ export class LocalRuntimeHttpServer {
 
     const address = this.server.address();
     if (!address || typeof address === "string") {
-      throw new Error("Local runtime server did not expose a TCP address");
+      throw new Error("本地服务未能获取监听地址");
     }
     this.boundPort = address.port;
     return address.port;

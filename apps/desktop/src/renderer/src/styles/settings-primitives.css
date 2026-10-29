@@ -47,7 +47,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
 }
 .settings-header-actions {
   flex: none;
@@ -59,12 +59,13 @@
 }
 .settings-row {
   display: grid;
+  height: 64px;
   min-width: 0;
   min-height: 52px;
   grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
   gap: 8px 20px;
-  padding: 16px;
+  padding: 12px 16px;
   border-top: 1px solid var(--border);
 }
 .settings-row-label {

@@ -487,7 +487,7 @@ export class DesktopRuntime {
           },
         setRunning: async (request: { running: boolean }) => {
           const server = this.localRuntimeServer;
-          if (!server) throw new Error("Local runtime is not initialized");
+          if (!server) throw new Error("本地服务尚未初始化");
           if (request.running) await server.start();
           else await server.stop();
           return server.status();

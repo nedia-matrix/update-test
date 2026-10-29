@@ -544,7 +544,7 @@ function PublicationRow({
           publication.platformContentId;
         if (!contentId) return;
         await navigator.clipboard.writeText(contentId);
-        context.setStatus("作品 ID 已复制");
+        context.setStatus("作品标识已复制");
       } else if (action === "review") {
         await window.matrix.openPublicationReview({
           publicationId: publication.id,
@@ -992,7 +992,7 @@ function PublicationRow({
                   {loadingWorks
                     ? "正在读取本机平台作品快照…"
                     : workOptions.length
-                      ? "请核对标题、发布时间和作品 ID。"
+                      ? "请核对标题、发布时间和作品标识。"
                       : "该账号尚无本机作品快照，请先同步。"}
                 </small>
                 <div class="attention-resolution-actions">
@@ -1137,15 +1137,15 @@ function PublicationRow({
               <section class="content-detail-block publication-detail-result">
                 <h3>作品结果</h3>
                 <div class="publication-content-id">
-                  <span>作品 ID</span>
+                  <span>作品标识</span>
                   <strong>{contentId ?? "尚未生成"}</strong>
                   {contentId && (
                     <button
                       class="icon-button"
                       type="button"
                       disabled={busy}
-                      aria-label="复制作品 ID"
-                      title="复制作品 ID"
+                      aria-label="复制作品标识"
+                      title="复制作品标识"
                       onClick={() => void runAction("copy")}
                     >
                       <Icon name="copy" size={14} />
@@ -1157,7 +1157,7 @@ function PublicationRow({
                   publication.selectedPlatformContentId !==
                     publication.platformContentId && (
                     <small class="publication-original-id">
-                      程序原始观测 ID：{publication.platformContentId}
+                      程序原始观测标识：{publication.platformContentId}
                     </small>
                   )}
                 {displayGroup === "completed" && contentId && (
@@ -1208,7 +1208,7 @@ function PublicationRow({
                         </strong>
                         <time>{formatTime(event.resolvedAt)}</time>
                         {event.manualPlatformContentId && (
-                          <p>作品 ID：{event.manualPlatformContentId}</p>
+                          <p>作品标识：{event.manualPlatformContentId}</p>
                         )}
                       </li>
                     ))}
@@ -1395,7 +1395,7 @@ function PlatformContentDetails({
             content.contentUrl &&
             content.contentUrl !== publication.platformContentUrl && (
               <p class="publication-snapshot-note">
-                平台快照 URL 与发布结果 URL 不同；打开作品仍使用发布结果 URL。
+                平台快照链接与发布结果链接不同；打开作品仍使用发布结果链接。
               </p>
             )}
         </>

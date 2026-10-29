@@ -349,7 +349,7 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 .runtime-origin-row > input {
   flex: 0 1 var(--runtime-input-width);
@@ -413,7 +413,22 @@
   align-items: center;
   flex-wrap: nowrap;
 }
-.sync-rule-controls > input {
+.sync-rule-period-editor {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 3px;
+  border-radius: 7px;
+  background: var(--surface-active);
+}
+.sync-rule-period-editor > input,
+.sync-rule-period-editor > button {
+  height: 30px;
+  min-height: 30px;
+}
+.sync-rule-period-editor > input {
+  padding-block: 0;
   width: 64px;
   min-width: 0;
   flex: none;
