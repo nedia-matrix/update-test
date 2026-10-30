@@ -8,7 +8,7 @@ import type {
   PlatformBrowserPolicy,
   PublishObservationSession,
 } from "@nedia-matrix/platform-sdk";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 
 import {
   fingerprintArguments,

@@ -6,7 +6,7 @@
   "packageManager": "pnpm@11.25.0",
   "scripts": {
     "build": "turbo run build",
-    "browser:install": "pnpm --filter @nedia-matrix/automation-playwright exec playwright install chromium",
+    "browser:install": "pnpm --filter @nedia-matrix/automation-playwright exec playwright-core install chromium",
     "dev": "turbo run build --filter='./packages/**' --filter='./plugins/**' && pnpm --filter @nedia-matrix/desktop dev",
     "desktop:build-dependencies": "turbo run build --filter=\"@nedia-matrix/desktop^...\"",
     "desktop:package:mac": "pnpm desktop:build-dependencies && pnpm --filter @nedia-matrix/desktop package:mac",

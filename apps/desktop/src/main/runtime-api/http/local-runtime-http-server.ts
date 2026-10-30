@@ -195,7 +195,14 @@ export class LocalRuntimeHttpServer {
       return;
     }
 
-    const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+    let url: URL;
+    try {
+      url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+    } catch {
+      rejectionCode = "INVALID_REQUEST";
+      writeJson(response, 400, { code: rejectionCode });
+      return;
+    }
     if (
       request.method === "POST" &&
       url.pathname === "/v1/auth/session" &&

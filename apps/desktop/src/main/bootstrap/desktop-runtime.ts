@@ -845,8 +845,10 @@ export class DesktopRuntime {
       publicationAssetStore,
       path.join(app.getPath("userData"), "staging"),
     );
+    const application = this.application;
     registerPublicationIpcHandlers({
       archiveLocalMedia: (resources) => localAssets.archive(resources),
+      useAssets: (operation) => application.withPublicationAssets(operation),
       ...dependencies,
       application: this.application,
     });

@@ -148,6 +148,7 @@ interface NediaMatrixApplicationDependencies {
     };
   mediaSelections: PublicationApplicationDependencies["mediaSelections"] & {
     removeForAccount(accountId: string): void;
+    referencedPaths?(): ReadonlySet<string>;
   };
   publishObservations: PublicationApplicationDependencies["observations"] & {
     stop(accountId: string): Promise<void>;
@@ -317,7 +318,10 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
           (dependencies.accountPublications.hasAnyActive?.() ?? false) ||
           (dependencies.browserSessions.hasAnyPublicationPage?.() ?? false),
         additionalReferencedPaths: () =>
-          this.coordinator?.protectedPaths() ?? new Set<string>(),
+          new Set([
+            ...(this.coordinator?.protectedPaths() ?? []),
+            ...(dependencies.mediaSelections.referencedPaths?.() ?? []),
+          ]),
         now: dependencies.now ?? (() => new Date()),
       },
       dependencies.archiveDiagnostics,
@@ -392,7 +396,9 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       listTasks: () => this.publishing.listTasks(),
       getTask: (publicationId) => this.publishing.getTask(publicationId),
       recreateDraft: (publicationId) =>
-        this.publishing.recreateDraft(publicationId),
+        this.withPublicationAssets(() =>
+          this.publishing.recreateDraft(publicationId),
+        ),
       queryTasks: (request) => this.publishing.queryTasks(request),
       resolveAttention: (request) => {
         if (request.resolution === "confirmed_published")
@@ -431,7 +437,10 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
           ? this.contentSync.contentUrl(task.accountId, selectedId)
           : this.publishing.publicationUrl(request);
       },
-      prepareRemote: (request) => this.publishing.prepareRemote(request),
+      prepareRemote: (request) =>
+        this.withPublicationAssets(() =>
+          this.publishing.prepareRemote(request),
+        ),
       prepare: (request) => this.publishing.prepare(request),
       registerLocalMedia: (request) =>
         this.publishing.registerLocalMedia(request),
@@ -510,7 +519,12 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
           publishing: dependencies.publishing,
           accountPublications: dependencies.accountPublications,
           mediaSelections: dependencies.mediaSelections,
-          remoteAssets: dependencies.remoteAssets,
+          remoteAssets: {
+            download: (requestId, assets) =>
+              this.withPublicationAssets(() =>
+                dependencies.remoteAssets.download(requestId, assets),
+              ),
+          },
         },
         wasDeleted: (requestId) =>
           dependencies.publicationArchive.isDeletedRequestId?.(requestId) ??
@@ -642,6 +656,12 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       get: this.publicationPlatformContent,
     }).get;
     this.platformContents = this.commands.guard(this.platformContents);
+  }
+
+  withPublicationAssets<T>(operation: () => Promise<T>): Promise<T> {
+    return this.commands.run(() =>
+      this.archiveMaintenance.useAssets(operation),
+    );
   }
 
   acquireAccountBrowserSwitch(accountId: string): () => void {

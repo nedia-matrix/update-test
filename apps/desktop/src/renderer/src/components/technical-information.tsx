@@ -93,9 +93,7 @@ export function TechnicalInformation({ context }: { context: AppContext }) {
             >
               {opening ? "正在打开…" : "打开日志目录"}
             </button>
-            <p class="settings-feedback">
-              日志与截图最多 100 MiB · 保留 14 天
-            </p>
+            <p class="settings-feedback">日志与截图最多 100 MiB · 保留 14 天</p>
           </>
         }
       >

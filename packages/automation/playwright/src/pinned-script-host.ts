@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import type { BrowserContext } from "playwright";
+import type { BrowserContext } from "playwright-core";
 
 export interface PinnedBrowserScriptAsset {
   readonly name: string;

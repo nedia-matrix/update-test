@@ -4,7 +4,7 @@ import type {
   SessionProbeResponse,
 } from "@nedia-matrix/automation-engine";
 import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-sdk";
-import type { BrowserContext, Page, Response } from "playwright";
+import type { BrowserContext, Page, Response } from "playwright-core";
 
 import {
   contextRequestPacer,

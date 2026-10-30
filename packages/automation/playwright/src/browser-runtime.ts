@@ -11,7 +11,7 @@ import { constants, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, rm } from "node:fs/promises";
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 
 export interface BrowserRuntimeConfiguration {
   provider: "system" | "fingerprint";

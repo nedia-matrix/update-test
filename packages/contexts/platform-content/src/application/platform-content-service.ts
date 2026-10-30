@@ -1,18 +1,14 @@
 import {
+  isAllowedPlatformUrl,
   PlatformSyncError,
   platformSyncFailure,
-  type PlatformSyncFailure,
-} from "@nedia-matrix/platform-sdk";
-import {
   resolveAccountPlatform,
   type AccountPlatformCatalog,
+  type PlatformContentData,
+  type PlatformDataClient,
+  type PlatformModule,
+  type PlatformSyncFailure,
 } from "@nedia-matrix/platform-sdk";
-import type {
-  PlatformContentData,
-  PlatformDataClient,
-  PlatformModule,
-} from "@nedia-matrix/platform-sdk";
-import { isAllowedPlatformUrl } from "@nedia-matrix/platform-sdk";
 import {
   PlatformContent,
   type PlatformContentSnapshot,
@@ -324,14 +320,7 @@ export class PlatformContentService {
           account.externalAccountId,
           {
             onPage: async (page) => {
-              const current = this.dependencies.accounts.require(accountId);
-              if (
-                current.platformId !== account.platformId ||
-                current.identityScheme !== account.identityScheme ||
-                current.externalAccountId !== account.externalAccountId
-              ) {
-                throw new Error("账号身份在作品同步期间发生变化");
-              }
+              this.assertAccountIdentity(accountId, account);
               const observedAt = this.dependencies.now().toISOString();
               const unique = new Map(
                 page.items.map((item) => [item.externalContentId, item]),
@@ -396,14 +385,7 @@ export class PlatformContentService {
           );
         }
       }
-      const current = this.dependencies.accounts.require(accountId);
-      if (
-        current.platformId !== account.platformId ||
-        current.identityScheme !== account.identityScheme ||
-        current.externalAccountId !== account.externalAccountId
-      ) {
-        throw new Error("账号身份在作品同步期间发生变化");
-      }
+      this.assertAccountIdentity(accountId, account);
       const observedAt = this.dependencies.now().toISOString();
       const uniqueItems = new Map(
         result.items.map((data) => [data.externalContentId, data]),
@@ -528,6 +510,20 @@ export class PlatformContentService {
       return run;
     } finally {
       notify(false);
+    }
+  }
+
+  private assertAccountIdentity(
+    accountId: string,
+    account: PlatformContentAccount,
+  ): void {
+    const current = this.dependencies.accounts.require(accountId);
+    if (
+      current.platformId !== account.platformId ||
+      current.identityScheme !== account.identityScheme ||
+      current.externalAccountId !== account.externalAccountId
+    ) {
+      throw new Error("账号身份在作品同步期间发生变化");
     }
   }
 

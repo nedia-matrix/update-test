@@ -17,6 +17,7 @@ type PublishIpcApplication = Pick<
 
 interface PublishIpcDependencies {
   application: PublishIpcApplication;
+  useAssets<T>(operation: () => Promise<T>): Promise<T>;
   archiveLocalMedia: (
     resources: readonly LocalMediaResource[],
   ) => Promise<LocalMediaResource[]>;
@@ -25,6 +26,7 @@ interface PublishIpcDependencies {
 export function registerPublicationIpcHandlers({
   application,
   archiveLocalMedia,
+  useAssets,
 }: PublishIpcDependencies): void {
   ipcMain.handle(
     ipcChannels.queryPublications,
@@ -182,12 +184,14 @@ export function registerPublicationIpcHandlers({
       if (result.canceled || result.filePaths.length === 0) {
         return { status: "cancelled" } as const;
       }
-      const resources = await archiveLocalMedia(
-        await readLocalMediaResources(result.filePaths),
-      );
-      return application.publications.registerLocalMedia({
-        ...request,
-        resources,
+      return useAssets(async () => {
+        const resources = await archiveLocalMedia(
+          await readLocalMediaResources(result.filePaths),
+        );
+        return application.publications.registerLocalMedia({
+          ...request,
+          resources,
+        });
       });
     },
   );

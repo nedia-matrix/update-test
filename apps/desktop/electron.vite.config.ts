@@ -46,7 +46,7 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        external: ["electron", "playwright", "playwright-core"],
+        external: ["electron", "playwright-core"],
       },
     },
   },

@@ -10,7 +10,7 @@ coverage/
 .env
 !.env.example
 .local/
-output/playwright/
+output/
 apps/desktop/resources/update-helper/
 apps/desktop/resources/plugins/
 apps/desktop/.plugins-development/

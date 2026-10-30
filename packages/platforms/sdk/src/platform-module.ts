@@ -1,3 +1,5 @@
+/// <reference lib="dom" />
+
 import type { SessionDetectionPlan } from "@nedia-matrix/automation-engine";
 import { z } from "zod";
 
@@ -88,27 +90,21 @@ export interface PlatformModule {
 const urlSchema = z.string().url();
 const requiredString = z.string().min(1);
 
-function addressOf(url: string): {
-  protocol: "http" | "https";
-  hostname: string;
-} {
-  const match = /^(https?):\/\/([^/:?#]+)(?::\d+)?(?:[/?#]|$)/i.exec(url);
-  if (!match?.[1] || !match[2]) {
-    throw new TypeError(`Unsupported platform URL: ${url}`);
-  }
-  return {
-    protocol: match[1].toLowerCase() as "http" | "https",
-    hostname: match[2].toLowerCase(),
-  };
-}
-
 export function isAllowedPlatformUrl(
   browser: PlatformBrowserPolicy,
   url: string,
 ): boolean {
-  const { protocol, hostname } = addressOf(url);
+  let address: URL;
+  try {
+    address = new URL(url);
+  } catch {
+    return false;
+  }
+  const { protocol, hostname } = address;
+  if (protocol !== "https:" && protocol !== "http:") return false;
+  if (address.username || address.password) return false;
   if (
-    protocol !== "https" &&
+    protocol !== "https:" &&
     hostname !== "localhost" &&
     hostname !== "127.0.0.1"
   ) {

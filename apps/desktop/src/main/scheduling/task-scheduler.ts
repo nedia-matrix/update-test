@@ -212,25 +212,27 @@ export class TaskScheduler implements TaskUseCases {
     );
   }
   private clearableHistory(scope: TaskClearScope): {
-    completed: number;
-    failed: number;
+    normal: number;
+    abnormal: number;
   } {
-    const counts = { completed: 0, failed: 0 };
+    const counts = { normal: 0, abnormal: 0 };
     for (const task of this.store.historyCandidates(scope))
       if (this.canClearHistory(task))
-        counts[task.state as "completed" | "failed"]++;
+        counts[
+          taskGroups.normal.includes(task.state) ? "normal" : "abnormal"
+        ]++;
     return counts;
   }
   clearHistory(request: ClearTaskHistoryRequest): { removed: number } {
     this.assertAccepting();
     this.assertHistoryScope(request);
     if (
-      !["completed", "failed"].includes(request.state) ||
+      !["normal", "abnormal"].includes(request.state) ||
       Object.keys(request).some(
         (key) => !["state", "type", "accountId", "platformId"].includes(key),
       )
     )
-      throw new TypeError("只能清除已完成或失败记录");
+      throw new TypeError("只能清除正常结束或异常结束记录");
     const removed = this.store.clearHistory(request, request.state, (task) =>
       this.canClearHistory(task),
     );

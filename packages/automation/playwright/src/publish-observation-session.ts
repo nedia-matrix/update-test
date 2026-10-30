@@ -3,7 +3,7 @@ import type {
   ObservedHttpResponse,
   PublishObservationSession,
 } from "@nedia-matrix/platform-sdk";
-import type { BrowserContext, CDPSession, Page } from "playwright";
+import type { BrowserContext, CDPSession, Page } from "playwright-core";
 
 const MAX_OBSERVED_RESPONSE_BYTES = 2_000_000;
 

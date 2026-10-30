@@ -55,23 +55,27 @@ const duration = (task: ScheduledTask) =>
     ? "尚未开始"
     : `${Math.max(0, Math.floor(((task.endedAt ?? Date.now()) - task.startedAt) / 1000))} 秒`;
 
-type TaskScope = "in_progress" | "completed" | "failed" | "all";
+type TaskScope = "in_progress" | "normal" | "abnormal" | "all";
 const scopeGroup = (scope: TaskScope) => (scope === "all" ? undefined : scope);
 const scopeOf = (query: TaskQuery): TaskScope =>
-  query.group === "completed" || query.group === "failed"
+  query.group === "normal" || query.group === "abnormal"
     ? query.group
     : query.group
       ? "in_progress"
       : "all";
 function routeQuery(): TaskQuery {
   const value = new URLSearchParams(location.hash.split("?")[1]).get("group");
-  // Legacy links with mixed results open All; execution links use the new broad group.
+  // Legacy result links open the corresponding outcome group.
   const scope: TaskScope =
-    value === "completed" || value === "failed"
+    value === "normal" || value === "abnormal"
       ? value
-      : value === "all" || value === "history" || value === "attention"
-        ? "all"
-        : "in_progress";
+      : value === "completed" || value === "history"
+        ? "normal"
+        : value === "failed" || value === "attention"
+          ? "abnormal"
+          : value === "all"
+            ? "all"
+            : "in_progress";
   return { limit: 30, offset: 0, group: scopeGroup(scope) };
 }
 export function TasksPage({ context }: { context: AppContext }) {
@@ -196,7 +200,7 @@ export function TasksPage({ context }: { context: AppContext }) {
       }
       setQuery((current) => ({ ...current, offset: 0 }));
       context.setStatus(
-        `已清除 ${result.removed} 条${state === "completed" ? "已完成" : "失败"}记录`,
+        `已清除 ${result.removed} 条${state === "normal" ? "正常结束" : "异常结束"}记录`,
       );
     } catch (error) {
       setError(error instanceof Error ? error.message : "清除记录失败");
@@ -308,8 +312,8 @@ export function TasksPage({ context }: { context: AppContext }) {
         >
           {(
             [
-              ["completed", "清除已完成记录"],
-              ["failed", "清除失败记录"],
+              ["normal", "清除正常结束记录"],
+              ["abnormal", "清除异常结束记录"],
             ] as const
           ).map(([state, label]) => (
             <button
@@ -322,7 +326,7 @@ export function TasksPage({ context }: { context: AppContext }) {
                 dataScope !== clearScopeKey ||
                 !data?.clearable[state]
               }
-              title="按当前平台、账号和类型清除全部匹配的调度记录，不删除业务数据"
+              title="按当前平台、账号和类型清除可安全移除的调度记录，不删除业务数据；结果未核实的发布记录暂不清除"
               onClick={() => void clearHistory(state)}
             >
               {clearing === state
@@ -355,9 +359,17 @@ export function TasksPage({ context }: { context: AppContext }) {
           >
             {(
               [
-                ["in_progress", "进行中", "除已完成和失败之外的所有任务"],
-                ["completed", "已完成", "已完成的任务"],
-                ["failed", "失败", "执行失败的任务"],
+                [
+                  "in_progress",
+                  "进行中",
+                  "排队、执行、待确认、重试及收尾中的任务",
+                ],
+                ["normal", "正常结束", "已完成或已取消的任务"],
+                [
+                  "abnormal",
+                  "异常结束",
+                  "失败、部分完成或发布结果需核实的任务",
+                ],
                 ["all", "全部", "全部任务记录"],
               ] as const
             ).map(([value, label, description]) => (

@@ -19,7 +19,7 @@
     "@nedia-matrix/automation-engine": "workspace:*",
     "@nedia-matrix/diagnostics": "workspace:*",
     "@nedia-matrix/platform-sdk": "workspace:*",
-    "playwright": "^1.62.1"
+    "playwright-core": "^1.62.1"
   },
   "devDependencies": {
     "@nedia-matrix/tsconfig": "workspace:*",

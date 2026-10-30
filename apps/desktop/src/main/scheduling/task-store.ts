@@ -356,7 +356,9 @@ export class TaskStore {
     });
   }
   historyCandidates(scope: TaskClearScope): TaskRecord[] {
-    const clauses = ["state IN ('completed','failed')"];
+    const clauses = [
+      "state IN ('completed','cancelled','failed','partial','uncertain')",
+    ];
     const args: string[] = [];
     for (const [key, column] of [
       ["type", "type"],
@@ -383,7 +385,8 @@ export class TaskStore {
     return this.transaction(() => {
       let removed = 0;
       for (const task of this.historyCandidates(scope)) {
-        if (task.state !== state || !canClear(task)) continue;
+        if (!taskGroups[state].includes(task.state) || !canClear(task))
+          continue;
         this.removeHistory(task);
         removed++;
       }

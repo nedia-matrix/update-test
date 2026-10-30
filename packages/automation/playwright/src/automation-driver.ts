@@ -11,7 +11,12 @@ import type {
 } from "@nedia-matrix/automation-engine";
 import { DiagnosticAttachmentStore } from "@nedia-matrix/diagnostics";
 import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-sdk";
-import type { ElementHandle, FileChooser, Locator, Page } from "playwright";
+import type {
+  ElementHandle,
+  FileChooser,
+  Locator,
+  Page,
+} from "playwright-core";
 
 import {
   HumanInteractionSession,

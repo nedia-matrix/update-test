@@ -1,7 +1,7 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -93,7 +93,7 @@
       ],
       "extraResources": [
         {
-          "from": "resources/update-helper/nedia-update-helper",
+          "from": "resources/update-helper/${arch}/nedia-update-helper",
           "to": "update-helper/nedia-update-helper"
         }
       ]

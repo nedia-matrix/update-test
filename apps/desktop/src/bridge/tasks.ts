@@ -62,6 +62,8 @@ export interface SyncRule {
   pausedReason: string | null;
 }
 export type TaskGroup =
+  | "normal"
+  | "abnormal"
   | "in_progress"
   | "completed"
   | "failed"
@@ -78,10 +80,9 @@ export const taskGroups: Record<TaskGroup, readonly TaskState[]> = {
     "awaiting_confirmation",
     "retry_wait",
     "finalizing",
-    "partial",
-    "cancelled",
-    "uncertain",
   ],
+  normal: ["completed", "cancelled"],
+  abnormal: ["failed", "partial", "uncertain"],
   completed: ["completed"],
   failed: ["failed"],
   active: [
@@ -109,7 +110,7 @@ export interface TaskQuery {
   offset?: number;
   limit?: number;
 }
-export type TaskClearState = "completed" | "failed";
+export type TaskClearState = "normal" | "abnormal";
 export type TaskClearScope = Pick<
   TaskQuery,
   "type" | "accountId" | "platformId"

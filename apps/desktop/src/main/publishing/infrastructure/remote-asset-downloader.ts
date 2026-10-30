@@ -1,17 +1,19 @@
 import { createHash } from "node:crypto";
 import { open, mkdtemp, mkdir, rm } from "node:fs/promises";
-import { isIP } from "node:net";
 import { basename, join } from "node:path";
-import { lookup } from "node:dns/promises";
 
 import type {
   DownloadedPublicationAsset,
-  PublicationAssetRole,
   RemotePublicationAsset,
 } from "@nedia-matrix/publishing";
 import type { DiagnosticTraceService } from "@nedia-matrix/diagnostics";
 
 import type { ContentAddressedPublicationAssetStore } from "./content-addressed-asset-store.js";
+
+import {
+  publicHttpsFetch,
+  validatePublicHttpsUrl,
+} from "../../network/public-https-fetch.js";
 
 interface RemoteAssetDownloaderOptions {
   assetStore: ContentAddressedPublicationAssetStore;
@@ -20,7 +22,6 @@ interface RemoteAssetDownloaderOptions {
   maxAssetBytes?: number;
   maxTaskBytes?: number;
   timeoutMs?: number;
-  resolveHost?: (hostname: string) => Promise<readonly string[]>;
   now?: () => Date;
   diagnostics?: Pick<DiagnosticTraceService, "start">;
 }
@@ -32,16 +33,12 @@ export class RemoteAssetDownloader {
   private readonly maxAssetBytes: number;
   private readonly maxTaskBytes: number;
   private readonly timeoutMs: number;
-  private readonly resolveHost: (
-    hostname: string,
-  ) => Promise<readonly string[]>;
 
   constructor(private readonly options: RemoteAssetDownloaderOptions) {
-    this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.fetch = options.fetch ?? publicHttpsFetch;
     this.maxAssetBytes = options.maxAssetBytes ?? 1024 * 1024 * 1024;
     this.maxTaskBytes = options.maxTaskBytes ?? 2 * 1024 * 1024 * 1024;
     this.timeoutMs = options.timeoutMs ?? 120_000;
-    this.resolveHost = options.resolveHost ?? resolvePublicAddresses;
   }
 
   async download(
@@ -66,7 +63,6 @@ export class RemoteAssetDownloader {
     const stagingDirectory = await mkdtemp(
       join(this.options.stagingRoot, `${requestId}-`),
     );
-    const newlyCreatedPaths: string[] = [];
     const downloaded: DownloadedPublicationAsset[] = [];
     let taskBytes = 0;
     try {
@@ -88,7 +84,6 @@ export class RemoteAssetDownloader {
           hash: staged.hash,
           mediaType: staged.mediaType,
         });
-        if (committed.created) newlyCreatedPaths.push(committed.relativePath);
         const { statusCode, ...assetMetadata } = staged;
         downloaded.push({
           ...assetMetadata,
@@ -135,32 +130,11 @@ export class RemoteAssetDownloader {
         message:
           error instanceof Error ? error.message : "Asset download failed",
       });
-      await Promise.all(
-        newlyCreatedPaths.map((relativePath) =>
-          this.options.assetStore.remove(relativePath),
-        ),
-      );
+      // Shared files may already belong to another task; only private staging is rolled back.
       throw error;
     } finally {
       await rm(stagingDirectory, { recursive: true, force: true });
     }
-  }
-
-  async discardUnreferenced(
-    assets: readonly DownloadedPublicationAsset[],
-    referencedRelativePaths: ReadonlySet<string>,
-  ): Promise<void> {
-    const unreferenced = new Set(
-      assets
-        .filter(({ created }) => created)
-        .map(({ localRelativePath }) => localRelativePath)
-        .filter((relativePath) => !referencedRelativePaths.has(relativePath)),
-    );
-    await Promise.all(
-      [...unreferenced].map((relativePath) =>
-        this.options.assetStore.remove(relativePath),
-      ),
-    );
   }
 
   private async downloadOne(
@@ -173,72 +147,87 @@ export class RemoteAssetDownloader {
     sourceOrigin: string;
     statusCode: number;
   }> {
-    const { response, sourceOrigin } = await this.fetchFollowingRedirects(
-      asset.url,
-    );
-    if (!response.ok || !response.body) {
-      throw new Error(
-        `Remote asset download failed with HTTP ${response.status}`,
-      );
-    }
-    const declaredLength = Number(response.headers.get("content-length"));
-    if (
-      Number.isFinite(declaredLength) &&
-      declaredLength > this.maxAssetBytes
-    ) {
-      throw new Error("Remote asset exceeds the per-file size limit");
-    }
-
-    const file = await open(stagedPath, "wx");
-    const hash = createHash("sha256");
-    let size = 0;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response: Response | undefined;
     try {
-      for await (const value of response.body) {
-        const chunk = Buffer.from(value);
-        size += chunk.length;
-        if (size > this.maxAssetBytes) {
-          throw new Error("Remote asset exceeds the per-file size limit");
-        }
-        hash.update(chunk);
-        await file.write(chunk);
+      const fetched = await this.fetchFollowingRedirects(
+        asset.url,
+        controller.signal,
+      );
+      response = fetched.response;
+      if (!response.ok || !response.body) {
+        throw new Error(
+          `Remote asset download failed with HTTP ${response.status}`,
+        );
       }
+      const declaredLength = Number(response.headers.get("content-length"));
+      if (
+        Number.isFinite(declaredLength) &&
+        declaredLength > this.maxAssetBytes
+      )
+        throw new Error("Remote asset exceeds the per-file size limit");
+
+      const file = await open(stagedPath, "wx");
+      const reader = response.body.getReader();
+      const abort = () => {
+        void reader.cancel(controller.signal.reason).catch(() => {});
+      };
+      controller.signal.addEventListener("abort", abort, { once: true });
+      const hash = createHash("sha256");
+      let size = 0;
+      try {
+        for (;;) {
+          controller.signal.throwIfAborted();
+          const { value, done } = await reader.read();
+          controller.signal.throwIfAborted();
+          if (done) break;
+          const chunk = Buffer.from(value);
+          size += chunk.length;
+          if (size > this.maxAssetBytes)
+            throw new Error("Remote asset exceeds the per-file size limit");
+          hash.update(chunk);
+          await file.write(chunk);
+        }
+      } finally {
+        controller.signal.removeEventListener("abort", abort);
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+        await file.close();
+      }
+      return {
+        hash: hash.digest("hex"),
+        mediaType: asset.mediaType,
+        size,
+        sourceOrigin: fetched.sourceOrigin,
+        statusCode: response.status,
+      };
     } finally {
-      await file.close();
+      clearTimeout(timeout);
+      await response?.body?.cancel().catch(() => {});
     }
-    return {
-      hash: hash.digest("hex"),
-      mediaType: asset.mediaType,
-      size,
-      sourceOrigin,
-      statusCode: response.status,
-    };
   }
 
   private async fetchFollowingRedirects(
     value: string,
+    signal: AbortSignal,
   ): Promise<{ response: Response; sourceOrigin: string }> {
-    let url = new URL(value);
+    let url = validatePublicHttpsUrl(value);
     const sourceOrigin = url.origin;
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-      await assertSafeRemoteUrl(url, this.resolveHost);
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-      let response: Response;
-      try {
-        response = await this.fetch(url, {
-          method: "GET",
-          redirect: "manual",
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+      signal.throwIfAborted();
+      const response = await this.fetch(url, {
+        method: "GET",
+        redirect: "manual",
+        signal,
+      });
       if (!redirectStatuses.has(response.status))
         return { response, sourceOrigin };
+      await response.body?.cancel();
       const location = response.headers.get("location");
       if (!location || redirects === 3)
         throw new Error("Too many asset redirects");
-      url = new URL(location, url);
+      url = validatePublicHttpsUrl(new URL(location, url).href);
     }
     throw new Error("Too many asset redirects");
   }
@@ -272,58 +261,4 @@ function validateAsset(asset: RemotePublicationAsset): void {
   if (!Number.isInteger(asset.order) || asset.order < 0) {
     throw new TypeError("Invalid remote asset order");
   }
-}
-
-async function assertSafeRemoteUrl(
-  url: URL,
-  resolveHost: (hostname: string) => Promise<readonly string[]>,
-): Promise<void> {
-  if (url.protocol !== "https:" || url.username || url.password) {
-    throw new TypeError("Remote asset URL must use HTTPS without credentials");
-  }
-  const addresses = isIP(url.hostname)
-    ? [url.hostname]
-    : await resolveHost(url.hostname);
-  if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
-    throw new TypeError("Remote asset URL resolves to a private address");
-  }
-}
-
-async function resolvePublicAddresses(
-  hostname: string,
-): Promise<readonly string[]> {
-  const results = await lookup(hostname, { all: true, verbatim: true });
-  return results.map(({ address }) => address);
-}
-
-function isPrivateAddress(address: string): boolean {
-  if (address.includes(":")) {
-    const normalized = address.toLowerCase();
-    const mappedIpv4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized)?.[1];
-    if (mappedIpv4) return isPrivateAddress(mappedIpv4);
-    return (
-      normalized === "::" ||
-      normalized === "::1" ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      normalized.startsWith("fe8") ||
-      normalized.startsWith("fe9") ||
-      normalized.startsWith("fea") ||
-      normalized.startsWith("feb")
-    );
-  }
-  const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part)))
-    return true;
-  const [first, second] = parts as [number, number, number, number];
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168) ||
-    first >= 224
-  );
 }

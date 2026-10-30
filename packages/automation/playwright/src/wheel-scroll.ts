@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 import type { PlatformScrollResult } from "@nedia-matrix/platform-sdk";
 import {
   jitterPoint,

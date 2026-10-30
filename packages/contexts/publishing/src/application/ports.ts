@@ -137,10 +137,6 @@ export interface RemotePublicationAssetPort {
     requestId: string,
     assets: readonly RemotePublicationAsset[],
   ): Promise<DownloadedPublicationAsset[]>;
-  discardUnreferenced(
-    assets: readonly DownloadedPublicationAsset[],
-    referencedRelativePaths: ReadonlySet<string>,
-  ): Promise<void>;
 }
 
 export interface PublicationLease {
