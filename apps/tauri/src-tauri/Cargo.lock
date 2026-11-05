@@ -2089,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "nedia-matrix-tauri"
-version = "0.7.3"
+version = "0.7.5"
 dependencies = [
  "open",
  "serde_json",

@@ -164,18 +164,41 @@ export function giteeClient({ repository, token, fetcher = fetch }) {
     { method = "GET", body, missing = false } = {},
   ) => {
     let response;
+    const upload = body instanceof FormData;
+    const headers = { Accept: "application/json" };
+    let progressTimer;
     try {
+      if (upload) {
+        body.set("access_token", token);
+        const fileName = body.get("file").name;
+        // Use the platform multipart encoder, including its exact Content-Length.
+        const multipart = await new Response(body).blob();
+        headers["Content-Type"] = multipart.type;
+        headers["Content-Length"] = String(multipart.size);
+        let sent = 0;
+        const started = Date.now();
+        const report = () =>
+          console.log(
+            `Gitee 上传进度：${fileName}，请求体已交给 HTTP 客户端 ${sent}/${multipart.size} 字节（${Math.floor((sent / multipart.size) * 100)}%），耗时 ${Math.floor((Date.now() - started) / 1000)} 秒${sent === multipart.size ? "，等待服务器响应" : ""}`,
+          );
+        progressTimer = setInterval(report, 15_000);
+        body = (async function* () {
+          for await (const chunk of multipart.stream()) {
+            sent += chunk.length;
+            yield chunk;
+          }
+          report();
+        })();
+      } else {
+        headers.Authorization = `Bearer ${token}`;
+      }
       response = await fetcher(`${apiOrigin}${base}${route}`, {
         method,
         body,
+        ...(upload ? { duplex: "half" } : {}),
         redirect: "manual",
-        signal: AbortSignal.timeout(
-          body instanceof FormData ? 60 * 60_000 : 120_000,
-        ),
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
+        signal: AbortSignal.timeout(upload ? 60 * 60_000 : 120_000),
+        headers,
       });
     } catch (error) {
       const cause = error?.cause ?? error;
@@ -186,6 +209,8 @@ export function giteeClient({ repository, token, fetcher = fetch }) {
       throw new Error(
         `Gitee API ${method} ${route} 请求失败${detail ? `（${detail}）` : ""}`,
       );
+    } finally {
+      clearInterval(progressTimer);
     }
     if (missing && response.status === 404) {
       await response.body?.cancel();
