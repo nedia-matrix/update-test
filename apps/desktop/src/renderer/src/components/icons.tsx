@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 
 export type IconName =
+  | "tasks"
   | "accounts"
   | "add"
   | "arrow-up-right"
@@ -12,8 +13,11 @@ export type IconName =
   | "copy"
   | "dark"
   | "delete"
+  | "eye"
+  | "eye-off"
   | "image"
   | "light"
+  | "minus"
   | "more"
   | "publish"
   | "refresh"
@@ -22,6 +26,12 @@ export type IconName =
   | "video";
 
 const paths: Record<IconName, JSX.Element> = {
+  tasks: (
+    <>
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M8 8h8M8 12h8M8 16h5" />
+    </>
+  ),
   accounts: (
     <>
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -63,6 +73,17 @@ const paths: Record<IconName, JSX.Element> = {
       <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5" />
     </>
   ),
+  eye: (
+    <>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  "eye-off": (
+    <>
+      <path d="m3 3 18 18M10.6 5.1 12 5c6.5 0 10 7 10 7a19 19 0 0 1-3 3.7M6.2 6.2A19 19 0 0 0 2 12s3.5 7 10 7c1.7 0 3.2-.5 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </>
+  ),
   image: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -76,6 +97,7 @@ const paths: Record<IconName, JSX.Element> = {
       <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41" />
     </>
   ),
+  minus: <path d="M5 12h14" />,
   more: (
     <>
       <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />

@@ -186,30 +186,16 @@ button.account-recent-card[aria-disabled="true"] {
 .account-settings[hidden] {
   display: none;
 }
-.account-settings-row,
-.account-removal-settings {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 20px;
-  padding: 14px 16px;
+.account-remove-button {
+  flex: none;
+  white-space: nowrap;
 }
-.account-settings-copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 4px;
-}
-.account-settings-copy strong,
-.account-removal-settings h2,
-.account-browser-switch-confirm > strong {
+.account-browser-switch-confirm .settings-editor-content > strong {
   margin: 0;
   font-size: 0.76rem;
   font-weight: 650;
   line-height: 1.5;
 }
-.account-settings-copy p,
 .account-browser-switch-confirm p,
 .account-browser-feedback p {
   margin: 0;
@@ -218,29 +204,9 @@ button.account-recent-card[aria-disabled="true"] {
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-.account-settings-value {
-  display: inline-flex;
-  min-height: 30px;
-  align-items: center;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-muted);
-  color: var(--text-secondary);
-  font-size: 0.74rem;
-  line-height: 1.5;
-}
-.account-settings-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+.account-browser-switch-confirm > .settings-actions,
+.account-browser-feedback > .settings-actions {
   justify-content: flex-end;
-  gap: 8px;
-}
-.account-settings-actions button,
-.account-remove-button {
-  flex: none;
-  white-space: nowrap;
 }
 .account-browser-switch-confirm,
 .account-browser-feedback {
@@ -299,25 +265,4 @@ button.account-recent-card[aria-disabled="true"] {
   overflow: visible;
   white-space: normal;
   overflow-wrap: anywhere;
-}
-
-.account-plugin-settings > .account-settings-copy {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-}
-.account-plugin-settings > .account-settings-copy label {
-  display: grid;
-  gap: 8px;
-}
-.account-plugin-settings > .account-settings-copy button {
-  justify-self: start;
-}
-
-.account-plugin-settings .segmented-control {
-  flex: 0 0 180px;
-}
-
-.account-plugin-settings > .account-settings-row + .account-settings-row {
-  border-top: 1px solid var(--border);
 }

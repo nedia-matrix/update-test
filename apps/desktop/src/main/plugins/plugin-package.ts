@@ -1,3 +1,4 @@
+import { pluginProtocolVersions } from "./plugin-protocol.mjs";
 import { createHash, verify } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -78,9 +79,9 @@ export function verifyPluginArchive(
   if (
     !object(manifest) ||
     manifest.kind !== "nedia.platform-plugin" ||
-    manifest.protocol !== 1 ||
-    manifest.sdk !== 1 ||
-    manifest.automation !== 1
+    manifest.protocol !== pluginProtocolVersions.protocol ||
+    manifest.sdk !== pluginProtocolVersions.sdk ||
+    manifest.automation !== pluginProtocolVersions.automation
   )
     throw new Error("插件协议或 SDK 不兼容");
   if (

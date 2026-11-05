@@ -12,6 +12,9 @@ const hosts = {
     "release-assets.githubusercontent.com",
     "objects.githubusercontent.com",
   ]),
+  // Verified against public v0.3.2 attachment redirects; keep unsigned release
+  // metadata downloads scoped to this provider. Signed payloads use manifest policy.
+  gitee: new Set(["gitee.com", "foruda.gitee.com"]),
 };
 
 export function validateUpdateUrl(
@@ -24,8 +27,8 @@ export function validateUpdateUrl(
     parsed.username ||
     parsed.password ||
     (parsed.port && parsed.port !== "443") ||
-    (source !== "github" && source !== "manifest") ||
-    (source === "github" && !hosts.github.has(parsed.hostname))
+    (source !== "github" && source !== "gitee" && source !== "manifest") ||
+    (source !== "manifest" && !hosts[source].has(parsed.hostname))
   ) {
     throw new Error("更新附件地址不在受信来源范围内，请使用下载页手动下载");
   }

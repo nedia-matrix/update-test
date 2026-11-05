@@ -1,3 +1,13 @@
+import {
+  prepareRuntimeCompatibility,
+  RuntimeCompatibilityError,
+} from "../runtime/runtime-compatibility.js";
+import { configureRuntimePaths } from "../runtime/runtime-paths.js";
+import { join } from "node:path";
+import {
+  acquireRuntimeLock,
+  RuntimeInUseError,
+} from "../runtime/runtime-lock.js";
 import { initializeDesktopPlugins } from "../plugins/desktop-plugins.js";
 import { desktopPreferences } from "../preferences/desktop-preferences.js";
 import { registerPreferencesIpc } from "../preferences/register-preferences-ipc.js";
@@ -46,6 +56,28 @@ if (!hasSingleInstanceLock) {
 void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
   .then(async () => {
     if (!hasSingleInstanceLock) return;
+    const paths = configureRuntimePaths({
+      shell: "electron",
+      environment: app.isPackaged ? "production" : "development",
+      legacyDirectory: app.getPath("userData"),
+      testRoot: process.env.NEDIA_COEXISTENCE_TEST_ROOT,
+    });
+    acquireRuntimeLock(
+      paths.businessDirectory,
+      join(
+        app.isPackaged
+          ? process.resourcesPath
+          : join(app.getAppPath(), "resources"),
+        "native",
+        `${process.platform}-${process.arch}`,
+      ),
+    );
+    prepareRuntimeCompatibility(
+      paths.businessDirectory,
+      paths.environment === "coexistence-test" && !app.isPackaged
+        ? "plugins-development"
+        : "plugins",
+    );
     registerPreferencesIpc(
       desktopPreferences(),
       {
@@ -56,8 +88,11 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
         if (!desktopRuntime) throw new Error("浏览器服务尚未就绪");
         return desktopRuntime.assertFingerprintBrowserReady();
       },
+      () => desktopRuntime?.assertAcceptingCommands(),
     );
-    await initializeDesktopPlugins();
+    await initializeDesktopPlugins(undefined, () =>
+      desktopRuntime?.assertAcceptingCommands(),
+    );
     desktopRuntime = new DesktopRuntime();
     desktopRuntime.start();
     const initialOpenUrl = findNediaMatrixOpenUrl(process.argv);
@@ -66,6 +101,16 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
     app.on("activate", () => desktopRuntime?.openMainWindow());
   })
   .catch(async (error: unknown) => {
+    if (error instanceof RuntimeCompatibilityError) {
+      dialog.showErrorBox("数据版本不兼容", error.message);
+      app.exit(1);
+      return;
+    }
+    if (error instanceof RuntimeInUseError) {
+      dialog.showErrorBox("业务运行中", error.message);
+      app.exit(1);
+      return;
+    }
     // The constructor may have logged a SQLite failure before it could return.
     // Give the bounded file queue a chance to persist that record before exit.
     await waitForShutdown(

@@ -12,6 +12,7 @@ interface RuntimeShutdownDependencies {
     flush(): Promise<void>;
     close(): Promise<void>;
   };
+  persistObservations?(): void;
   report?(event: string, details?: Readonly<Record<string, unknown>>): void;
   finishDiagnostics?(result: { outcome: string; message?: string }): void;
 }
@@ -28,10 +29,12 @@ export async function shutdownDesktopRuntime(
     dependencies.report?.("application.shutdown.media_selections_cleared");
     await dependencies.browserSessions.closeAll();
     dependencies.report?.("application.shutdown.browsers_closed");
+    dependencies.persistObservations?.();
     dependencies.report?.("application.shutdown.logs_flush_started");
     await dependencies.diagnostics?.flush();
     dependencies.report?.("application.shutdown.logs_flush_completed");
     dependencies.finishDiagnostics?.({ outcome: "completed" });
+    await dependencies.diagnostics?.close();
   } catch (error) {
     dependencies.report?.("application.shutdown.failed", {
       code: "SHUTDOWN_CLEANUP_FAILED",
@@ -45,8 +48,6 @@ export async function shutdownDesktopRuntime(
         error instanceof Error ? error.message : "Desktop shutdown failed",
     });
     throw error;
-  } finally {
-    await dependencies.diagnostics?.close();
   }
 }
 

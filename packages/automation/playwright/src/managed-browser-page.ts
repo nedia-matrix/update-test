@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AutomationDriver } from "@nedia-matrix/automation-engine";
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 import { PlaywrightAutomationDriver } from "./automation-driver.js";
 import { createPlaywrightSessionProbeClient } from "./session-probe-client.js";
 import { createPlaywrightPublishObservationSession } from "./publish-observation-session.js";

@@ -25,6 +25,8 @@ import {
   validateUpdateUrl,
 } from "./update-network.js";
 
+import { UPDATE_MANIFEST_NAME } from "../../bridge/update-source.js";
+
 export interface UpdateControllerDependencies {
   currentVersion: string;
   source: ApplicationUpdateSource;
@@ -158,10 +160,10 @@ export class UpdateController {
     }
     this.change({ latestVersion: release.version });
     const manifests = (release.assets ?? []).filter(
-      (asset) => asset.name === "update-manifest.json",
+      (asset) => asset.name === `${UPDATE_MANIFEST_NAME}.json`,
     );
     const signatures = (release.assets ?? []).filter(
-      (asset) => asset.name === "update-manifest.sig",
+      (asset) => asset.name === `${UPDATE_MANIFEST_NAME}.sig`,
     );
     if (
       !release.manifest &&

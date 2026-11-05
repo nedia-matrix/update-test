@@ -30,12 +30,14 @@ export interface PublicationArchiveCleanupResult {
 
 export class PublicationArchiveMaintenance {
   private operationTail: Promise<void> = Promise.resolve();
+  private assetUsers = 0;
   constructor(
     private readonly publications: PublicationArchiveRepository,
     private readonly assets: PublicationArchiveAssetStore,
     private readonly activity: {
       hasActiveTask(publicationId: string): boolean;
       hasActiveAssetUsers?(): boolean;
+      additionalReferencedPaths?(): ReadonlySet<string>;
       now(): Date;
     } = {
       hasActiveTask: () => false,
@@ -49,10 +51,23 @@ export class PublicationArchiveMaintenance {
     },
   ) {}
 
+  async useAssets<T>(operation: () => Promise<T>): Promise<T> {
+    const pendingCleanup = this.operationTail;
+    this.assetUsers++;
+    try {
+      await pendingCleanup;
+      return await operation();
+    } finally {
+      this.assetUsers--;
+    }
+  }
+
   async usage(): Promise<PublicationArchiveUsage> {
     const publications = this.publications.list();
     const assets = await this.assets.list();
     const referencedPaths = publicationAssetPaths(publications);
+    for (const path of this.activity.additionalReferencedPaths?.() ?? [])
+      referencedPaths.add(path);
     const referencedBytes = sumAssetBytes(assets, referencedPaths);
     const totalBytes = sumAssetBytes(assets);
     return {
@@ -170,13 +185,17 @@ export class PublicationArchiveMaintenance {
     const assets = inventory ?? (await this.assets.list());
     const beforeBytes = initialBytes ?? sumAssetBytes(assets);
     const referencedPaths = publicationAssetPaths(this.publications.list());
-    const unreferenced = this.activity.hasActiveAssetUsers?.()
-      ? []
-      : assets.filter(
-          ({ relativePath }) =>
-            !referencedPaths.has(relativePath) &&
-            (candidatePaths === undefined || candidatePaths.has(relativePath)),
-        );
+    for (const path of this.activity.additionalReferencedPaths?.() ?? [])
+      referencedPaths.add(path);
+    const unreferenced =
+      this.assetUsers > 0 || this.activity.hasActiveAssetUsers?.()
+        ? []
+        : assets.filter(
+            ({ relativePath }) =>
+              !referencedPaths.has(relativePath) &&
+              (candidatePaths === undefined ||
+                candidatePaths.has(relativePath)),
+          );
     const outcomes = await Promise.allSettled(
       unreferenced.map(({ relativePath }) => this.assets.remove(relativePath)),
     );

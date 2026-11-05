@@ -1,52 +1,34 @@
 import { defineConfig } from "electron-vite";
-import { createPublicKey } from "node:crypto";
-import { configuredPublicKeys } from "../../scripts/publish/update-keys.mjs";
-const updateKeys = configuredPublicKeys();
-if (
-  process.env.NEDIA_REQUIRE_UPDATE_KEYS === "1" &&
-  Object.keys(updateKeys ?? {}).length === 0
-) {
-  throw new Error("签名发布构建必须配置 NEDIA_UPDATE_PUBLIC_KEYS");
-}
-if (
-  !updateKeys ||
-  Array.isArray(updateKeys) ||
-  typeof updateKeys !== "object"
-) {
-  throw new Error(
-    "NEDIA_UPDATE_PUBLIC_KEYS must be a JSON object of key IDs and PEM public keys",
-  );
-}
-if (Object.hasOwn(updateKeys, "development-only"))
-  throw new Error("发行信任配置不能包含插件开发密钥");
-for (const [id, pem] of Object.entries(updateKeys)) {
-  if (
-    !/^[A-Za-z0-9._-]{1,64}$/.test(id) ||
-    typeof pem !== "string" ||
-    !pem.includes("-----BEGIN PUBLIC KEY-----") ||
-    pem.includes("PRIVATE KEY") ||
-    createPublicKey(pem).asymmetricKeyType !== "ed25519"
-  ) {
-    throw new Error(
-      "NEDIA_UPDATE_PUBLIC_KEYS contains an invalid Ed25519 public key",
-    );
-  }
-}
+import {
+  configuredPublicKeys,
+  validateReleasePublicKeys,
+} from "../../scripts/publish/update-keys.mjs";
+const updateKeys = validateReleasePublicKeys(configuredPublicKeys(), {
+  required: process.env.NEDIA_REQUIRE_UPDATE_KEYS === "1",
+});
 const distribution =
   process.env.NEDIA_UPDATE_DISTRIBUTION ??
   (process.platform === "darwin" ? "app-zip" : "unsupported");
 if (!["app-zip", "portable", "nsis", "unsupported"].includes(distribution))
   throw new Error("Invalid NEDIA_UPDATE_DISTRIBUTION");
 
+const updateSourceDefine = {
+  __NEDIA_DEFAULT_UPDATE_SOURCE_URL__: JSON.stringify(
+    process.env.NEDIA_DEFAULT_UPDATE_SOURCE_URL ??
+      "https://github.com/nedia-matrix/desktop",
+  ),
+};
+
 export default defineConfig({
   main: {
     define: {
+      ...updateSourceDefine,
       __NEDIA_UPDATE_PUBLIC_KEYS__: JSON.stringify(updateKeys),
       __NEDIA_UPDATE_DISTRIBUTION__: JSON.stringify(distribution),
     },
     build: {
       rollupOptions: {
-        external: ["electron", "playwright", "playwright-core"],
+        external: ["electron", "playwright-core"],
       },
     },
   },
@@ -64,12 +46,13 @@ export default defineConfig({
     },
   },
   renderer: {
+    define: updateSourceDefine,
     esbuild: {
       jsx: "automatic",
       jsxImportSource: "preact",
     },
     server: {
-      port: 3000,
+      port: 8888,
       strictPort: true,
     },
   },

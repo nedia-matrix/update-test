@@ -200,6 +200,7 @@ export interface RecreatedPublicationDraft {
 }
 
 export type PreparePublishDraftResult =
+  | { status: "queued"; taskId: string; requestId: string }
   | {
       status: "ready_for_review";
       mediaCount: number;
@@ -550,3 +551,9 @@ export {
   type RemotePublicationAssetPort,
   type StoredPublicationAsset,
 } from "./ports.js";
+
+export {
+  validatePublishDraftRequest,
+  validateRemoteDraftRequest,
+  validateRemoteAssetsForForm,
+} from "./publish-request-validator.js";

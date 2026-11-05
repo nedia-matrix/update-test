@@ -1,6 +1,12 @@
+import { mkdir } from "node:fs/promises";
+import {
+  assertBrowserProfileCompatible,
+  readBrowserProfileRequirements,
+  reserveBrowserProfileVersion,
+  playwrightRuntimeVersion,
+} from "./browser-profile-compatibility.js";
 import { bindProfileRequestPacer } from "./request-pacing.js";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 import type { SessionDetectionPlan } from "@nedia-matrix/automation-engine";
@@ -8,11 +14,12 @@ import type {
   PlatformBrowserPolicy,
   PublishObservationSession,
 } from "@nedia-matrix/platform-sdk";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 
 import {
   fingerprintArguments,
   loadBrowserRuntime,
+  previewBrowserRuntime,
   saveBrowserRuntime,
   verifyFingerprintBrowser,
   type BrowserRuntimeConfiguration,
@@ -86,7 +93,12 @@ async function launchPersistentBrowser(
   headless = false,
   preferredChannel: string | undefined,
   runtime: StoredBrowserRuntime,
-): Promise<{ context: BrowserContext; channel: string }> {
+  requestedRuntime?: BrowserRuntimeConfiguration,
+): Promise<{
+  context: BrowserContext;
+  channel: string;
+  browserVersion: string;
+}> {
   const failures: { channel: string; message: string }[] = [];
   const sharedOptions: PersistentBrowserOptions = {
     headless,
@@ -111,23 +123,78 @@ async function launchPersistentBrowser(
           },
         ]
       : browserLaunchCandidates();
+  const requirements = await readBrowserProfileRequirements(profileDirectory);
   const pinnedChannel =
     runtime.provider === "fingerprint"
       ? "Fingerprint Chromium"
-      : (runtime.channel ?? preferredChannel);
+      : (runtime.channel ??
+        (requirements.saved?.provider === runtime.provider
+          ? requirements.saved.channel
+          : undefined) ??
+        preferredChannel);
   const selected = pinnedChannel
     ? candidates.filter((candidate) => candidate.name === pinnedChannel)
     : candidates;
+  const explicitFingerprintSwitch =
+    runtime.provider === "fingerprint" &&
+    requirements.saved?.provider === "system";
   for (const candidate of selected) {
+    const candidateOptions =
+      candidate.name === "Playwright Chromium"
+        ? { executablePath: chromium.executablePath() }
+        : candidate.options;
+    let browserVersion: string;
+    try {
+      const probe = await chromium.launch({
+        ...candidateOptions,
+        headless: true,
+        chromiumSandbox: true,
+        timeout: 30_000,
+        ...(runtime.provider === "fingerprint"
+          ? { args: fingerprintArguments(runtime.fingerprintSeed) }
+          : {}),
+      });
+      try {
+        browserVersion = probe.version();
+      } finally {
+        await probe.close();
+      }
+    } catch (error) {
+      failures.push({
+        channel: candidate.name,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    const selectedVersion = {
+      provider: runtime.provider,
+      channel: candidate.name,
+      browserVersion,
+    };
+    assertBrowserProfileCompatible(
+      requirements,
+      selectedVersion,
+      explicitFingerprintSwitch,
+    );
+    await mkdir(profileDirectory, { recursive: true });
+    runtime = await loadBrowserRuntime(profileDirectory, requestedRuntime);
+    await reserveBrowserProfileVersion(
+      profileDirectory,
+      selectedVersion,
+      explicitFingerprintSwitch,
+    );
+    await saveBrowserRuntime(profileDirectory, {
+      ...runtime,
+      channel: candidate.name,
+    });
     let context: BrowserContext;
     try {
       context = await chromium.launchPersistentContext(profileDirectory, {
         ...sharedOptions,
-        ...candidate.options,
+        ...candidateOptions,
         ignoreDefaultArgs: [
           "--disable-component-extensions-with-background-pages",
           "--disable-extensions",
-          // "--disable-default-apps"
         ],
         args: [
           "--disable-dev-shm-usage",
@@ -138,20 +205,20 @@ async function launchPersistentBrowser(
         ],
       });
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      failures.push({ channel: candidate.name, message: detail });
-      continue;
+      // A failed persistent launch may already have touched the profile. Never
+      // retry another channel against it or bypass its existing browser lock.
+      throw new BrowserLaunchError(
+        [
+          ...failures,
+          {
+            channel: candidate.name,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        runtime.provider === "fingerprint",
+      );
     }
-    try {
-      await saveBrowserRuntime(profileDirectory, {
-        ...runtime,
-        channel: candidate.name,
-      });
-    } catch (error) {
-      await context.close();
-      throw error;
-    }
-    return { context, channel: candidate.name };
+    return { context, channel: candidate.name, browserVersion };
   }
 
   throw new BrowserLaunchError(failures, runtime.provider === "fingerprint");
@@ -217,6 +284,8 @@ export interface OpenedBrowserContext {
   context: BrowserContext;
   channel: string;
   headless: boolean;
+  browserVersion?: string;
+  playwrightVersion?: string;
   close(): Promise<void>;
 }
 
@@ -227,21 +296,24 @@ export async function openPersistentBrowserContext(
   if (!isAbsolute(options.profileDirectory)) {
     throw new TypeError("Browser profile directory must be an absolute path");
   }
-  await mkdir(options.profileDirectory, { recursive: true });
-  const runtime = await loadBrowserRuntime(
+  await readBrowserProfileRequirements(options.profileDirectory);
+  const { runtime } = await previewBrowserRuntime(
     options.profileDirectory,
     options.runtime,
   );
-  const { context, channel } = await launchPersistentBrowser(
+  const { context, channel, browserVersion } = await launchPersistentBrowser(
     options.profileDirectory,
     options.headless,
     options.preferredChannel,
     runtime,
+    options.runtime,
   );
   bindProfileRequestPacer(context, options.profileDirectory);
   return {
     context,
     channel,
+    browserVersion,
+    playwrightVersion: playwrightRuntimeVersion,
     headless: options.headless ?? false,
     close: () => context.close(),
   };

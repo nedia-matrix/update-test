@@ -352,8 +352,9 @@ export class PublicationService implements PublicationUseCases {
 
   prepare(
     request: PreparePublishDraftRequest,
+    settingsSnapshot?: import("@nedia-matrix/platform-sdk").PlatformSettings,
   ): Promise<PreparePublishDraftResult> {
-    return this.draftPreparation.prepareDraft(request);
+    return this.draftPreparation.prepareDraft(request, settingsSnapshot);
   }
 
   registerLocalMedia(

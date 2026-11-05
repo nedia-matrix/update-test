@@ -18,7 +18,7 @@ export function AccountBrowserStatus({
   const label = browserRuntimeLabel(status);
   return (
     <span
-      class={`account-browser-status${running ? " running" : ""}${compact ? " compact" : ""}`}
+      class={`account-browser-status${running ? " running" : ""}`}
       title={label}
       aria-label={label}
     >

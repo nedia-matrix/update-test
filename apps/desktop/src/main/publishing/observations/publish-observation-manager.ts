@@ -34,6 +34,15 @@ export class PublishObservationManager {
     void this.stop(input.accountId);
     const id = randomUUID();
     let stopped = false;
+    let stopping: Promise<void> | undefined;
+    const stopWith = (operation: () => Promise<void>): Promise<void> => {
+      stopping ??= operation().catch((error) => {
+        stopping = undefined;
+        stopped = false;
+        throw error;
+      });
+      return stopping;
+    };
     let armed = false;
     let completed = false;
     let finishing: Promise<void> | undefined;
@@ -152,30 +161,33 @@ export class PublishObservationManager {
         }).then(() => input.monitor.submissionAttempted());
         await submissionAttempt;
       },
-      interrupt: async (reason = "observation_interrupted") => {
-        if (stopped) return;
-        stopped = true;
-        if (!completed && armed) {
-          await input.monitor.interrupt(reason);
-        }
-        await persistenceTail;
-        await finalize();
-        if (!completed) finishDiagnostics(reason);
-      },
+      interrupt: (reason = "observation_interrupted") =>
+        stopWith(async () => {
+          if (stopped) return;
+          stopped = true;
+          if (!completed && armed) {
+            await input.monitor.interrupt(reason);
+          }
+          await persistenceTail;
+          await finalize();
+          if (!completed) finishDiagnostics(reason);
+        }),
       stopSilently: async () => {
         if (hasSubmissionEvidence) {
           await hosted.interrupt();
           return;
         }
-        if (stopped) return;
-        stopped = true;
-        unsubscribe();
-        input.monitor.stop();
-        if (this.observations.get(input.accountId) === hosted) {
-          this.observations.delete(input.accountId);
-        }
-        await finish();
-        report("monitor.stopped_silently");
+        await stopWith(async () => {
+          if (stopped) return;
+          stopped = true;
+          unsubscribe();
+          input.monitor.stop();
+          if (this.observations.get(input.accountId) === hosted) {
+            this.observations.delete(input.accountId);
+          }
+          await finish();
+          report("monitor.stopped_silently");
+        });
       },
     };
     this.observations.set(input.accountId, hosted);
@@ -253,10 +265,18 @@ export class PublishObservationManager {
   }
 
   async stopAll(): Promise<void> {
-    await Promise.all(
+    const results = await Promise.allSettled(
       [...this.observations.values(), ...this.directExecutions.values()].map(
         (observation) => observation.interrupt("desktop_shutdown"),
       ),
     );
+    const failures = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failures.length)
+      throw new AggregateError(
+        failures.map((failure) => failure.reason),
+        "发布观察未能全部停止",
+      );
   }
 }

@@ -1,3 +1,5 @@
+import { RuntimeAccountAccess } from "../../security/runtime-account-access.js";
+import { writeAccessError } from "../../security/runtime-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { PlatformAccountIdentityError } from "@nedia-matrix/account-management";
@@ -11,7 +13,10 @@ import {
 import { readJsonRequest, writeJson } from "../http-json.js";
 
 export class RuntimePlatformContentRoutes {
-  constructor(private readonly application: NediaMatrixUseCases) {}
+  constructor(
+    private readonly application: NediaMatrixUseCases,
+    private readonly access = new RuntimeAccountAccess(application),
+  ) {}
 
   async sync(
     request: IncomingMessage,
@@ -21,11 +26,13 @@ export class RuntimePlatformContentRoutes {
       const target = parseRuntimePlatformContentSyncRequest(
         await readJsonRequest(request),
       );
+      this.access.byIdentity(target.platform, target.externalAccountId);
       const run =
         await this.application.platformContents.refreshByExternalIdentity({
           platformId: target.platform,
           externalAccountId: target.externalAccountId,
         });
+      this.access.byIdentity(target.platform, target.externalAccountId);
       writeJson(response, 200, runtimePlatformContentSyncResult(target, run));
     } catch (error) {
       this.writeError(response, error);
@@ -39,6 +46,10 @@ export class RuntimePlatformContentRoutes {
     try {
       const query = parseRuntimePlatformContentQuery(
         await readJsonRequest(request),
+      );
+      this.access.byIdentity(
+        query.target.platform,
+        query.target.externalAccountId,
       );
       const result = this.application.platformContents.queryByExternalIdentity({
         platformId: query.target.platform,
@@ -56,6 +67,7 @@ export class RuntimePlatformContentRoutes {
   }
 
   private writeError(response: ServerResponse, error: unknown): void {
+    if (writeAccessError(response, error)) return;
     if (error instanceof PlatformAccountIdentityError) {
       writeJson(response, error.code === "ACCOUNT_NOT_FOUND" ? 404 : 409, {
         code: error.code,

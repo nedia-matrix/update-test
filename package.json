@@ -5,8 +5,9 @@
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
+    "version:sync": "node scripts/publish/release-config.mjs",
     "build": "turbo run build",
-    "browser:install": "pnpm --filter @nedia-matrix/automation-playwright exec playwright install chromium",
+    "browser:install": "pnpm --filter @nedia-matrix/automation-playwright exec playwright-core install chromium",
     "dev": "turbo run build --filter='./packages/**' --filter='./plugins/**' && pnpm --filter @nedia-matrix/desktop dev",
     "desktop:build-dependencies": "turbo run build --filter=\"@nedia-matrix/desktop^...\"",
     "desktop:package:mac": "pnpm desktop:build-dependencies && pnpm --filter @nedia-matrix/desktop package:mac",
@@ -17,10 +18,13 @@
     "postinstall": "node scripts/fix-electron.mjs",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "browser:install:fingerprint": "turbo run build --filter=@nedia-matrix/automation-playwright && node packages/automation/playwright/scripts/install-fingerprint-browser.mjs"
+    "browser:install:fingerprint": "turbo run build --filter=@nedia-matrix/automation-playwright && node packages/automation/playwright/scripts/install-fingerprint-browser.mjs",
+    "tauri:dev": "pnpm --filter @nedia-matrix/tauri dev",
+    "tauri:package": "pnpm --filter @nedia-matrix/tauri package"
   },
   "devDependencies": {
     "prettier": "^3.8.3",
+    "resedit": "1.7.2",
     "turbo": "^2.10.8",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7"

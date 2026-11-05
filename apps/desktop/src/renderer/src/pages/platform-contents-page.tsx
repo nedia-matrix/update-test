@@ -129,6 +129,23 @@ export function PlatformContentsPage({
     };
   }, [accountId]);
 
+  useEffect(() => {
+    let active = true;
+    const stop = window.matrix.onTasksChanged(() => {
+      if (accountId)
+        void window.matrix
+          .listPlatformContents({ accountId })
+          .then((result) => {
+            if (active) setData(result);
+          })
+          .catch(() => undefined);
+    });
+    return () => {
+      active = false;
+      stop();
+    };
+  }, [accountId]);
+
   const account = useMemo(
     () => accounts.find(({ id }) => id === accountId),
     [accountId, accounts],
@@ -139,19 +156,11 @@ export function PlatformContentsPage({
     setSyncing(true);
     context.setStatus("正在从平台读取作品和最新指标…", "busy");
     try {
-      const run = await window.matrix.refreshPlatformContents({ accountId });
-      const refreshed = await window.matrix.listPlatformContents({ accountId });
-      setData(refreshed);
-      if (run.status === "failed") {
-        context.setStatus(run.diagnostics[0] ?? "平台作品同步失败", "error");
-      } else if (run.status === "partial") {
-        context.setStatus(
-          run.diagnostics[0] ?? `已读取 ${run.itemsRead} 条作品，结果不完整`,
-          "error",
-        );
-      } else {
-        context.setStatus(`已同步 ${run.itemsRead} 条平台作品`);
-      }
+      await window.matrix.tasks.enqueueSync({
+        accountId,
+        type: "platform_content_sync",
+      });
+      context.setStatus("作品同步已受理，可在任务管理页面查看进度");
     } catch (error) {
       context.setStatus(errorMessage(error, "平台作品同步失败"), "error");
     } finally {
@@ -240,7 +249,7 @@ export function PlatformContentsPage({
           <span>指标</span>
           <span>数据时间</span>
         </div>
-        <div class="content-list" aria-live="polite">
+        <div aria-live="polite">
           {loading ? (
             <EmptyContent title="正在加载平台作品…" />
           ) : data.items.length === 0 ? (

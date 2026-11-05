@@ -1,3 +1,8 @@
+import {
+  platformSyncFailure,
+  PlatformSyncError,
+  type PlatformSyncFailure,
+} from "@nedia-matrix/platform-sdk";
 import { isPlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 import { buildXiaohongshuContentUrl } from "../shared/content-url.js";
 import { xhsVideoPermitEndpoint } from "./video-preparation.js";
@@ -163,10 +168,16 @@ async function request(
     timeoutMs: 15_000,
   });
   if (response.status === 429)
-    throw new PlatformDataOperationError("rate_limited", "平台请求受限");
+    throw new PlatformDataOperationError("rate_limited", "平台请求受限", {
+      retryAfterMs: response.retryAfterMs,
+    });
   if (!response.ok) {
     if (response.status === 401 || response.status === 403)
-      throw new Error("小红书登录已失效或请求被拒绝，请打开账号浏览器检查");
+      throw new PlatformSyncError({
+        code: "authentication",
+        message: "小红书登录已失效或请求被拒绝，请打开账号浏览器检查",
+        retryable: false,
+      });
     throw new PlatformDataOperationError(
       "request_failed",
       "小红书接口请求失败",
@@ -197,12 +208,14 @@ export const xhsContentCapability: PlatformContentCapability = {
     const finish = (
       complete: boolean,
       diagnostic?: string,
+      failure?: PlatformSyncFailure,
     ): PlatformContentReadResult => ({
       items: [...items.values()],
       complete,
       pagesRead,
       ...(remoteTotal === undefined ? {} : { remoteTotal }),
       ...(diagnostic ? { diagnostics: [diagnostic] } : {}),
+      ...(failure ? { failure } : {}),
     });
     for (let page = 0; page < 500; page++) {
       let body: unknown;
@@ -213,6 +226,7 @@ export const xhsContentCapability: PlatformContentCapability = {
           return finish(
             false,
             `作品第 ${page + 1} 页同步停止（${error.userMessage}）`,
+            platformSyncFailure(error),
           );
         throw error;
       }

@@ -1,3 +1,14 @@
+import { completeRuntimeExit, drainCleanup } from "./runtime-exit.js";
+import { runtimeCompatibility } from "../runtime/runtime-support.js";
+import {
+  businessDataDirectory,
+  desktopRuntimePaths,
+} from "../runtime/desktop-data-paths.js";
+import { TaskStore } from "../scheduling/task-store.js";
+import { registerTaskIpc } from "../scheduling/register-task-ipc.js";
+import { RuntimeAccess } from "../runtime-api/security/runtime-access.js";
+import { SqliteRuntimeAccessStore } from "../runtime-api/security/sqlite-runtime-access-store.js";
+import { registerRuntimeAccessIpc } from "../runtime-api/ipc/register-runtime-access-ipc.js";
 import { resolvePlatformSettings } from "@nedia-matrix/platform-sdk";
 import { desktopPlugins } from "../plugins/desktop-plugins.js";
 import { createPlatformExecutionHost } from "../plugins/execution-host.js";
@@ -26,7 +37,8 @@ import {
   PublishingService,
   toPublishResultUpdate,
 } from "@nedia-matrix/publishing";
-import { app, dialog } from "electron";
+import { app, dialog, ipcMain } from "electron";
+import { ipcChannels } from "../../bridge/channels.js";
 import { openDesktopMetadata } from "../persistence/open-desktop-metadata.js";
 import { DesktopDiagnosticTraceService } from "../diagnostics/desktop-diagnostic-trace-service.js";
 import { registerDiagnosticIpc } from "../diagnostics/ipc/register-diagnostic-ipc.js";
@@ -74,7 +86,7 @@ import { registerApplicationUpdateIpcHandler } from "../updates/register-applica
 import { configuredUpdateSource } from "../updates/application-update.js";
 import { completeUpdateExit } from "./update-exit.js";
 import { ApplicationLifecycle } from "./application-lifecycle.js";
-import { shutdownDesktopRuntime, waitForShutdown } from "./runtime-cleanup.js";
+import { shutdownDesktopRuntime } from "./runtime-cleanup.js";
 
 import { ElectronAutomationNotices } from "../shell/notifications/electron-automation-notices.js";
 
@@ -147,10 +159,13 @@ export class DesktopRuntime {
   private quitAllowed = false;
   private updateInstallInProgress = false;
   private updateCleanupFailed = false;
+  private updateShutdownCleanup?: Promise<void>;
+  private shutdownAttempt?: Promise<void>;
+  private shutdownKeepAlive?: ReturnType<typeof setInterval>;
   private startupStage = "initialize_services";
 
   constructor() {
-    const userDataDirectory = app.getPath("userData");
+    const userDataDirectory = businessDataDirectory();
     const diagnosticRoot = path.join(userDataDirectory, "diagnostics");
     let traceService: DesktopDiagnosticTraceService | undefined;
     const diagnosticStore = new JsonlDiagnosticStore({
@@ -183,6 +198,10 @@ export class DesktopRuntime {
     this.startupTrace = traceService.start({
       operation: "application.startup",
       environment: {
+        desktopShell: desktopRuntimePaths().shell,
+        engineProtocol: runtimeCompatibility.engineProtocol,
+        playwrightVersion:
+          runtimeCompatibility.browserAutomation.playwrightVersion,
         appVersion:
           typeof app.getVersion === "function" ? app.getVersion() : "unknown",
         operatingSystem: process.platform,
@@ -401,7 +420,7 @@ export class DesktopRuntime {
       },
     );
     const fingerprintRoot = join(
-      app.getPath("userData"),
+      businessDataDirectory(),
       "browsers",
       fingerprintBrowserVersion,
     );
@@ -461,14 +480,15 @@ export class DesktopRuntime {
       );
     }
     const publicationAssetStore = new ContentAddressedPublicationAssetStore(
-      path.join(app.getPath("userData"), "assets"),
+      path.join(businessDataDirectory(), "assets"),
     );
     const remoteAssets = new RemoteAssetDownloader({
       assetStore: publicationAssetStore,
-      stagingRoot: path.join(app.getPath("userData"), "staging"),
+      stagingRoot: path.join(businessDataDirectory(), "staging"),
       diagnostics: this.diagnostics,
     });
     const dependencies = {
+      taskStore: new TaskStore(this.metadata.database),
       platforms: desktopPlatformCatalog,
       runtime: {
         status: () =>
@@ -480,7 +500,7 @@ export class DesktopRuntime {
           },
         setRunning: async (request: { running: boolean }) => {
           const server = this.localRuntimeServer;
-          if (!server) throw new Error("Local runtime is not initialized");
+          if (!server) throw new Error("本地服务尚未初始化");
           if (request.running) await server.start();
           else await server.stop();
           return server.status();
@@ -620,45 +640,28 @@ export class DesktopRuntime {
           }
         },
       },
-      notices: new ElectronAutomationNotices(
-        async (accountId) => {
-          const account = this.accountStore.get(accountId);
-          if (!account) return;
-          const lease = this.accountPublications.acquire(accountId);
-          if (!lease) throw new Error("Account has an active publication");
-          try {
-            await this.browserSessions.closeAutomation(account);
-          } finally {
-            lease.release();
-          }
-        },
-        (notice, event, error) => {
-          const trace = this.diagnostics.start({
-            operation: "automation.notice",
-            accountId: notice.accountId,
-            ...(notice.kind.startsWith("publish.") &&
-            "publicationId" in notice &&
-            notice.publicationId
-              ? { requestId: notice.publicationId }
-              : {}),
-          });
-          if ("publicationId" in notice && notice.publicationId) {
-            trace.bind({ publicationId: notice.publicationId });
-          }
-          trace.report({
-            component: "shell",
-            event,
-            level: event === "notice.failed" ? "error" : "info",
-            details: {
-              kind: notice.kind,
-              ...(error instanceof Error ? { errorName: error.name } : {}),
-            },
-          });
-          trace.finish({
-            outcome: event === "notice.failed" ? "failed" : "completed",
-          });
-        },
-      ),
+      notices: new ElectronAutomationNotices((notice, event, error) => {
+        const trace = this.diagnostics.start({
+          operation: "automation.notice",
+          accountId: notice.accountId,
+          ...(notice.publicationId ? { requestId: notice.publicationId } : {}),
+        });
+        if (notice.publicationId) {
+          trace.bind({ publicationId: notice.publicationId });
+        }
+        trace.report({
+          component: "shell",
+          event,
+          level: event === "notice.failed" ? "error" : "info",
+          details: {
+            kind: notice.kind,
+            ...(error instanceof Error ? { errorName: error.name } : {}),
+          },
+        });
+        trace.finish({
+          outcome: event === "notice.failed" ? "failed" : "completed",
+        });
+      }),
       automationDiagnostics: this.diagnostics,
       archiveDiagnostics: {
         report: ({
@@ -683,7 +686,7 @@ export class DesktopRuntime {
       accountPublications: this.accountPublications,
       createProfileId: (platformId: string, accountId: string) =>
         new DesktopBrowserPolicy(
-          app.getPath("userData"),
+          businessDataDirectory(),
           desktopPreferences(),
         ).createProfileId(platformId, accountId),
       accountStore: this.accountStore,
@@ -773,9 +776,18 @@ export class DesktopRuntime {
       },
       eventSink: {
         publish: (event) => {
+          if (event.type === "tasks.changed") {
+            this.mainWindow.sendTasksChanged();
+            this.localRuntimeServer?.publishTasksChanged();
+          }
           if (event.type === "accounts.changed") {
             this.mainWindow.sendAccountsChanged();
             this.localRuntimeServer?.publishAccountsChanged();
+          }
+          if (event.type === "platform-contents.changed") {
+            this.localRuntimeServer?.publishPlatformContentsChanged(
+              event.accountId,
+            );
           }
         },
       } satisfies DesktopEventSink,
@@ -794,7 +806,7 @@ export class DesktopRuntime {
       operations: this.metadata.accountBrowserSwitches,
       platforms: desktopPlatformCatalog,
       policy: new DesktopBrowserPolicy(
-        app.getPath("userData"),
+        businessDataDirectory(),
         desktopPreferences(),
       ),
       browser: this.browserSessions,
@@ -818,6 +830,27 @@ export class DesktopRuntime {
     void this.application.accounts.cleanupRetiredProfiles().catch(() => {
       console.error("Failed to clean up retired browser profiles");
     });
+    registerTaskIpc(this.application);
+    ipcMain.handle(ipcChannels.restartForPluginChanges, () => {
+      if (
+        !desktopPlugins()
+          .list()
+          .some(
+            (plugin) =>
+              plugin.pending === "enable" ||
+              plugin.pending === "disable" ||
+              plugin.pending === "remove",
+          )
+      )
+        throw new Error("没有待重启的启用、停用或卸载操作");
+      if (
+        this.updateInstallInProgress ||
+        this.updateCleanupFailed ||
+        this.lifecycle.requestWindowOpen() !== "open-now"
+      )
+        throw new Error("应用正在安装更新或退出，请稍后重试");
+      this.requestQuit(true);
+    });
     registerAccountIpcHandlers(this.application, this.browserSessions);
     registerPlatformContentIpcHandlers(this.application);
     registerPublicationAssetIpc({
@@ -828,10 +861,12 @@ export class DesktopRuntime {
     });
     const localAssets = new LocalAssetArchiver(
       publicationAssetStore,
-      path.join(app.getPath("userData"), "staging"),
+      path.join(businessDataDirectory(), "staging"),
     );
+    const application = this.application;
     registerPublicationIpcHandlers({
       archiveLocalMedia: (resources) => localAssets.archive(resources),
+      useAssets: (operation) => application.withPublicationAssets(operation),
       ...dependencies,
       application: this.application,
     });
@@ -857,25 +892,32 @@ export class DesktopRuntime {
       finish: async (prepared) => {
         if (!this.lifecycle.beginShutdown())
           throw new Error("应用已进入退出流程");
+        this.shutdownKeepAlive ??= setInterval(() => {}, 1_000);
         if (this.publicationRetryTimer)
           clearInterval(this.publicationRetryTimer);
         try {
           await completeUpdateExit(prepared, {
-            cleanup: async () => {
-              await this.accountBrowserSwitch?.stop();
-              await this.fingerprintBrowser.stop();
-              await this.localRuntimeServer?.stop();
-              await this.publishObservations.stopAll();
-              this.publicationObservations.retryPending();
-              if (this.publicationObservations.pendingCount > 0)
-                throw new Error("发布结果持久化失败");
-              this.mediaSelections.clear();
-              await this.browserSessions.closeAll();
-              await this.diagnostics.flush();
-              await this.diagnostics.close();
+            cleanup: () => {
+              const task = (async () => {
+                await this.accountBrowserSwitch?.stop();
+                await this.fingerprintBrowser.stop();
+                await this.localRuntimeServer?.stop();
+                await this.publishObservations.stopAll();
+                this.publicationObservations.retryPending();
+                if (this.publicationObservations.pendingCount > 0)
+                  throw new Error("发布结果持久化失败");
+                this.mediaSelections.clear();
+                await this.browserSessions.closeAll();
+                await this.diagnostics.flush();
+                await this.diagnostics.close();
+              })();
+              this.updateShutdownCleanup = task;
+              return task;
             },
             closeDatabase: () => this.metadata.database.close(),
             exit: () => {
+              if (this.shutdownKeepAlive) clearInterval(this.shutdownKeepAlive);
+              this.shutdownKeepAlive = undefined;
               this.applicationTray?.destroy();
               this.quitAllowed = true;
               app.exit(0);
@@ -885,7 +927,7 @@ export class DesktopRuntime {
           await prepared.cancel();
           this.updateCleanupFailed = true;
           throw new Error(
-            `${error instanceof Error ? error.message : "更新退出失败"}；安装已停止，业务入口已关闭，请退出并重新启动应用。`,
+            `${error instanceof Error ? error.message : "更新退出失败"}；安装已停止，业务入口已关闭；清理未完成前不能切换版本，请等待后再次退出重试。`,
           );
         }
       },
@@ -912,10 +954,10 @@ export class DesktopRuntime {
           architecture: process.arch,
         };
       },
-      logDirectory: path.join(app.getPath("userData"), "diagnostics"),
+      logDirectory: path.join(businessDataDirectory(), "diagnostics"),
       evidenceDirectories: [
-        path.join(app.getPath("userData"), "diagnostics", "evidence"),
-        path.join(app.getPath("userData"), "automation-evidence"),
+        path.join(businessDataDirectory(), "diagnostics", "evidence"),
+        path.join(businessDataDirectory(), "automation-evidence"),
       ],
       findTraceForPublication: (publicationId) =>
         this.diagnostics.findTraceForPublication(publicationId),
@@ -925,6 +967,7 @@ export class DesktopRuntime {
 
     this.registerCustomProtocol();
     this.localRuntimeServer = this.createLocalRuntimeServer(this.application);
+    this.application.startScheduling();
     registerRuntimeStatusIpcHandler(this.application);
     const runtimeTrace = this.diagnostics.start({
       operation: "runtime.listen",
@@ -988,36 +1031,72 @@ export class DesktopRuntime {
     this.mainWindow.open();
   }
 
-  requestQuit(): void {
-    if (this.updateCleanupFailed) {
-      // No installation permit was submitted. Exit without closing a possibly busy database.
-      app.exit(1);
+  assertAcceptingCommands(): void {
+    if (
+      this.updateInstallInProgress ||
+      this.lifecycle.requestWindowOpen() !== "open-now"
+    )
+      throw new Error("应用正在维护或退出，业务入口已关闭");
+  }
+
+  requestQuit(restart = false): void {
+    if (
+      this.quitAllowed ||
+      this.shutdownAttempt ||
+      (this.updateInstallInProgress && !this.updateCleanupFailed)
+    )
       return;
-    }
-    if (this.updateInstallInProgress) return;
-    if (!this.lifecycle.beginShutdown()) return;
-    // Abort network work before draining the application command gate.
-    void cancelApplicationUpdateDownload();
+    this.lifecycle.beginShutdown();
+    // A disconnected Node sidecar must not naturally exit while cleanup is
+    // pending or failed. The file lock alone does not keep its event loop alive.
+    this.shutdownKeepAlive ??= setInterval(() => {}, 1_000);
+    // Both methods close admission synchronously, before waiting on any cleanup.
+    const commands = this.application?.stopCommands() ?? Promise.resolve();
+    const endpoint = this.localRuntimeServer?.stop() ?? Promise.resolve();
+    const switchCleanup =
+      this.accountBrowserSwitch?.stop() ?? Promise.resolve();
+    const installer = this.fingerprintBrowser.stop();
+    const downloads = cancelApplicationUpdateDownload();
+    const oldUpdate = this.updateShutdownCleanup;
     const shutdownTrace = this.diagnostics.start({
       operation: "application.shutdown",
       requestId: randomUUID(),
     });
     this.publicationObservations.retryPending();
-    const switchCleanup =
-      this.accountBrowserSwitch?.stop() ?? Promise.resolve();
-    const fingerprintCleanup = Promise.all([
-      switchCleanup,
-      this.fingerprintBrowser.stop(),
-    ]);
-    const shutdown = Promise.all([
-      switchCleanup
-        .then(() => this.application?.stopCommands())
-        .then(() =>
-          shutdownDesktopRuntime({
+    const showIncomplete = (message: string) => {
+      console.warn(message);
+      try {
+        dialog.showErrorBox?.("退出尚未完成", message);
+      } catch (error) {
+        console.error("Unable to show shutdown notice", error);
+      }
+    };
+    this.shutdownAttempt = completeRuntimeExit(
+      {
+        cleanup: async () => {
+          // An expired update attempt may still own asynchronous cleanup. Drain it
+          // before touching the same services again; never grant a late permit.
+          const previousUpdate = oldUpdate
+            ? oldUpdate.catch(() => undefined)
+            : Promise.resolve();
+          await drainCleanup([
+            commands,
+            endpoint,
+            switchCleanup,
+            installer,
+            downloads ?? Promise.resolve(),
+            previousUpdate,
+          ]);
+          await shutdownDesktopRuntime({
             browserSessions: this.browserSessions,
             mediaSelections: this.mediaSelections,
             publishObservations: this.publishObservations,
             diagnostics: this.diagnostics,
+            persistObservations: () => {
+              this.publicationObservations.retryPending();
+              if (this.publicationObservations.pendingCount > 0)
+                throw new Error("发布观察尚未全部持久化");
+            },
             report: (event, details) =>
               shutdownTrace.report({
                 component: "application",
@@ -1025,35 +1104,41 @@ export class DesktopRuntime {
                 ...(details ? { details } : {}),
               }),
             finishDiagnostics: (result) => shutdownTrace.finish(result),
-          }),
-        ),
-      this.localRuntimeServer?.stop(),
-    ]).then(() => undefined);
-
-    void shutdown.catch(() => undefined);
-    // Installer cleanup has its own network/process timeouts. Do not force exit
-    // before a mounted volume or probe process has been released.
-    void fingerprintCleanup
-      .then(() => waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS))
-      .then((result) => {
-        if (result === "timed-out") {
-          console.warn(
-            `Desktop shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms; quitting without waiting for remaining cleanup`,
-          );
-        }
-      })
-      .catch((error: unknown) => {
+          });
+        },
+        delayed: () =>
+          showIncomplete(
+            "仍在收尾任务或关闭浏览器，应用将继续等待。此时不能切换桌面版本；请勿重复发布。",
+          ),
+        closeDatabase: () => {
+          if (this.publicationRetryTimer)
+            clearInterval(this.publicationRetryTimer);
+          this.metadata.database.close();
+        },
+        exit: () => {
+          if (this.shutdownKeepAlive) clearInterval(this.shutdownKeepAlive);
+          this.shutdownKeepAlive = undefined;
+          this.applicationTray?.destroy();
+          this.quitAllowed = true;
+          if (restart) {
+            const portableExecutable = process.env.PORTABLE_EXECUTABLE_FILE;
+            app.relaunch(
+              portableExecutable ? { execPath: portableExecutable } : {},
+            );
+          }
+          app.exit(0);
+        },
+      },
+      SHUTDOWN_TIMEOUT_MS,
+    )
+      .catch((error) => {
         console.error("Failed to cleanly shut down desktop runtime", error);
+        showIncomplete(
+          "清理未能完成，应用仍持有业务运行权。请保留数据并再次退出重试；此时不能切换版本或重新提交发布。",
+        );
       })
       .finally(() => {
-        if (this.publicationRetryTimer)
-          clearInterval(this.publicationRetryTimer);
-        this.applicationTray?.destroy();
-        this.quitAllowed = true;
-        // Exit synchronously after closing: no async cleanup callback may run
-        // against the closed connection. Interrupted work recovers next launch.
-        this.metadata.database.close();
-        app.exit(0);
+        this.shutdownAttempt = undefined;
       });
   }
 
@@ -1074,7 +1159,13 @@ export class DesktopRuntime {
   private createLocalRuntimeServer(
     application: NediaMatrixApplication,
   ): LocalRuntimeHttpServer {
-    return new LocalRuntimeHttpServer({
+    const access = new RuntimeAccess(
+      new SqliteRuntimeAccessStore(this.metadata.database),
+      readLocalRuntimePort(process.env.MATRIX_RUNTIME_PORT),
+    );
+    application.setRuntimeTaskAccess((accountId) => access.allowed(accountId));
+    const server = new LocalRuntimeHttpServer({
+      access,
       application,
       diagnostics: this.diagnostics,
       port: readLocalRuntimePort(process.env.MATRIX_RUNTIME_PORT),
@@ -1094,8 +1185,14 @@ export class DesktopRuntime {
           platformIdentityAddressing: true,
           platformContentSnapshots: true,
           platformContentSync: true,
+          queuedPublications: true,
+          taskHistoryRetention: true,
         },
       },
     });
+    registerRuntimeAccessIpc(application, server, access, () =>
+      this.assertAcceptingCommands(),
+    );
+    return server;
   }
 }

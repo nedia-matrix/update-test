@@ -21,7 +21,7 @@ func fixtureBundle(t *testing.T, path, version string) {
 		t.Fatal(err)
 	}
 	os.MkdirAll(filepath.Join(path, "Contents", "MacOS"), 0755)
-	info := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.nediamatrix.desktop</string><key>CFBundleShortVersionString</key><string>%s</string><key>CFBundleExecutable</key><string>NediaMatrix</string></dict></plist>`, version)
+	info := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>%s</string><key>CFBundleShortVersionString</key><string>%s</string><key>CFBundleExecutable</key><string>NediaMatrix</string></dict></plist>`, applicationID, version)
 	os.WriteFile(filepath.Join(path, "Contents", "Info.plist"), []byte(info), 0600)
 	if err := copyFile(binary, filepath.Join(path, "Contents", "MacOS", "NediaMatrix"), 0700); err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func fixtureInstaller(t *testing.T) *Installer {
 	}
 	target := filepath.Join(root, "Current.app")
 	fixtureBundle(t, target, "0.3.3")
-	newer := filepath.Join(root, "new", "NediaMatrix.app")
+	newer := filepath.Join(root, "new", applicationName+".app")
 	fixtureBundle(t, newer, "0.4.0")
 	file := filepath.Join(root, "update.zip")
 	output, _ := os.Create(file)
@@ -70,7 +70,7 @@ func fixtureInstaller(t *testing.T) *Installer {
 	if runtime.GOARCH == "amd64" {
 		arch = "x64"
 	}
-	request := Request{ID: id, ParentPID: os.Getpid(), Platform: "darwin", Arch: arch, Distribution: "app-zip", CurrentVersion: "0.3.3", Version: "0.4.0", AppID: "com.nediamatrix.desktop", Package: file, Target: target, Size: int64(len(bytes)), SHA256: hex.EncodeToString(hash[:])}
+	request := Request{ID: id, ParentPID: os.Getpid(), Platform: "darwin", Arch: arch, Distribution: "app-zip", CurrentVersion: "0.3.3", Version: "0.4.0", AppID: applicationID, Package: file, Target: target, Size: int64(len(bytes)), SHA256: hex.EncodeToString(hash[:])}
 	data, _ := json.Marshal(request)
 	requestFile := filepath.Join(directory, "request.json")
 	os.WriteFile(requestFile, data, 0600)
@@ -182,5 +182,17 @@ func TestReplacementConfirmsStartupAndPreservesOldBundle(t *testing.T) {
 	old.Version = old.CurrentVersion
 	if err := validateBundle(i.journal.Backup, old); err != nil {
 		t.Fatal("old backup missing:", err)
+	}
+}
+
+func TestUnifiedUpdateRejectsPrototypeBundleIdentity(t *testing.T) {
+	i := fixtureInstaller(t)
+	if err := i.prepare(); err != nil {
+		t.Fatal(err)
+	}
+	r := i.journal.Request
+	r.AppID = "com.nediamatrix.tauri"
+	if err := validateBundle(i.journal.Staged, r); err == nil {
+		t.Fatal("unified bundle accepted prototype identity")
 	}
 }

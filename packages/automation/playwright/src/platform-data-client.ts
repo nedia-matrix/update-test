@@ -6,7 +6,7 @@ import type {
   PlatformObservedJsonRequest,
 } from "@nedia-matrix/platform-sdk";
 import { PlatformDataOperationError } from "@nedia-matrix/platform-sdk";
-import type { BrowserContext, Page, Response } from "playwright";
+import type { BrowserContext, Page, Response } from "playwright-core";
 
 import {
   abortableWait,

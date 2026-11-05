@@ -1,4 +1,10 @@
+import {
+  SettingsSection,
+  SettingsHeader,
+  SettingsEditor,
+} from "./settings-primitives.js";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { SettingsDisclosure } from "./settings-disclosure.js";
 import type {
   BundledPlatformPlugin,
   PlatformPluginSummary,
@@ -47,92 +53,132 @@ export function PlatformPluginSettings() {
     void run(() => window.matrix.listPlugins());
   }, []);
   return (
-    <section
-      class="settings-surface platform-plugin-settings"
+    <SettingsSection
+      class="platform-plugin-settings"
       aria-labelledby="platform-plugin-title"
     >
-      <header class="settings-section-header">
-        <div>
-          <h2 id="platform-plugin-title">平台插件</h2>
-          <p>
-            安装、替换、启停和卸载在重启应用后生效。卸载保留账号与发布历史。
-          </p>
-        </div>
-        <button
-          class="small-button"
-          type="button"
-          disabled={busy}
-          onClick={() => void openInstaller()}
-        >
-          安装插件
-        </button>
-      </header>
+      <SettingsHeader
+        title="平台插件"
+        titleId="platform-plugin-title"
+        summary={
+          <>
+            {busy && plugins.length === 0
+              ? "正在读取插件…"
+              : `已安装 ${plugins.filter((plugin) => plugin.installed).length} 个插件`}
+            {plugins.some((plugin) => plugin.pending)
+              ? " · 有变更待重启生效"
+              : ""}
+          </>
+        }
+        actions={
+          <>
+            <button
+              class="secondary-button compact-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void openInstaller()}
+            >
+              安装插件
+            </button>
+            {plugins.some(
+              (plugin) =>
+                plugin.pending === "enable" ||
+                plugin.pending === "disable" ||
+                plugin.pending === "remove",
+            ) && (
+              <button
+                class="secondary-button compact-button"
+                type="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    await window.matrix.restartForPluginChanges();
+                  } catch (cause) {
+                    setError(updateErrorMessage(cause, "重启失败"));
+                    setBusy(false);
+                  }
+                }}
+              >
+                重启
+              </button>
+            )}
+          </>
+        }
+      />
       {visiblePlugins(plugins).length === 0 && (
-        <p class="plugin-install-hint">暂无已安装插件，点击“安装插件”添加。</p>
+        <div class="empty-state plugin-empty-state">
+          <strong>暂无已安装插件</strong>
+          <p>点击右上角“安装插件”，恢复默认插件或安装自定义插件。</p>
+        </div>
       )}
       {visiblePlugins(plugins).map((plugin) => (
-        <div class="runtime-settings-row" key={plugin.id}>
-          <div class="runtime-settings-status">
-            <span>
-              <strong>{plugin.displayName}</strong>
-              <small>
-                {plugin.installed
-                  ? `${plugin.version ?? "未知版本"} · ${plugin.available ? "可用" : plugin.enabled ? "不可用" : "已停用"}`
-                  : "未安装"}
-              </small>
-              {plugin.pending && (
-                <small>
-                  待重启生效：
-                  {
-                    {
-                      install: "安装或替换",
-                      enable: "启用",
-                      disable: "停用",
-                      remove: "卸载",
-                    }[plugin.pending]
-                  }
-                </small>
-              )}
-              {plugin.error && <small role="alert">{plugin.error}</small>}
-            </span>
-          </div>
-          <div class="update-settings-actions">
-            {plugin.installed && (
+        <SettingsDisclosure
+          key={plugin.id}
+          title={plugin.displayName}
+          summary={`${plugin.version ?? "未知版本"} · ${plugin.pending ? "待重启生效" : plugin.available ? "可用" : plugin.enabled ? "不可用" : "已停用"}`}
+        >
+          <SettingsEditor
+            actions={
               <>
-                <button
-                  class="secondary-button compact-button"
-                  type="button"
-                  disabled={busy || !!plugin.pending}
-                  onClick={() =>
-                    void run(() =>
-                      window.matrix.changePlugin({
-                        id: plugin.id,
-                        action: plugin.enabled ? "disable" : "enable",
-                      }),
-                    )
-                  }
-                >
-                  {plugin.enabled ? "停用" : "启用"}
-                </button>
-                <button
-                  class="secondary-button compact-button"
-                  type="button"
-                  disabled={busy || !!plugin.pending}
-                  onClick={() =>
-                    void run(() =>
-                      window.matrix.changePlugin({
-                        id: plugin.id,
-                        action: "remove",
-                      }),
-                    )
-                  }
-                >
-                  卸载
-                </button>
+                {plugin.installed && (
+                  <>
+                    <button
+                      class="secondary-button compact-button"
+                      type="button"
+                      disabled={busy || !!plugin.pending}
+                      onClick={() =>
+                        void run(() =>
+                          window.matrix.changePlugin({
+                            id: plugin.id,
+                            action: plugin.enabled ? "disable" : "enable",
+                          }),
+                        )
+                      }
+                    >
+                      {plugin.enabled ? "停用" : "启用"}
+                    </button>
+                    <button
+                      class="secondary-button compact-button"
+                      type="button"
+                      disabled={busy || !!plugin.pending}
+                      onClick={() =>
+                        void run(() =>
+                          window.matrix.changePlugin({
+                            id: plugin.id,
+                            action: "remove",
+                          }),
+                        )
+                      }
+                    >
+                      卸载
+                    </button>
+                  </>
+                )}
               </>
+            }
+          >
+            {plugin.pending && (
+              <p class="settings-feedback">
+                待重启生效：
+                {
+                  {
+                    install: "安装或替换",
+                    enable: "启用",
+                    disable: "停用",
+                    remove: "卸载",
+                  }[plugin.pending]
+                }
+              </p>
             )}
-          </div>
-        </div>
+            {plugin.error && (
+              <p class="settings-feedback settings-feedback-error" role="alert">
+                {plugin.error}
+              </p>
+            )}
+          </SettingsEditor>
+        </SettingsDisclosure>
       ))}
       <dialog
         ref={dialog}
@@ -243,7 +289,6 @@ export function PlatformPluginSettings() {
           )}
         </div>
         <div
-          class="plugin-install-custom"
           id="plugin-install-panel-custom"
           role="tabpanel"
           aria-labelledby="plugin-install-tab-custom"
@@ -252,7 +297,6 @@ export function PlatformPluginSettings() {
         >
           <button
             type="button"
-            class="primary-button"
             disabled={busy}
             onClick={() => void run(() => window.matrix.installPlugin())}
           >
@@ -288,6 +332,6 @@ export function PlatformPluginSettings() {
           {error}
         </p>
       )}
-    </section>
+    </SettingsSection>
   );
 }

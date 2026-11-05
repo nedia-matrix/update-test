@@ -1,3 +1,5 @@
+import { IS_TAURI } from "../../bridge/update-source.js";
+import { businessDataDirectory } from "../runtime/desktop-data-paths.js";
 import type { ApplicationUpdateCheckResult } from "../../bridge/contracts.js";
 import { join } from "node:path";
 import { app, BrowserWindow, shell } from "electron";
@@ -30,20 +32,38 @@ export function configureUpdateInstallation(
 ): void {
   installationLifecycle = lifecycle;
 }
+// Both Windows payloads share the sidecar build. Only the portable launcher sets
+// its original EXE location; NSIS continues to target the installed GUI executable.
+function updateDistribution(): string {
+  if (
+    IS_TAURI &&
+    process.platform === "win32" &&
+    (process.env.PORTABLE_EXECUTABLE_FILE ||
+      process.env.PORTABLE_EXECUTABLE_DIR)
+  )
+    return "portable";
+  return typeof __NEDIA_UPDATE_DISTRIBUTION__ === "string"
+    ? __NEDIA_UPDATE_DISTRIBUTION__
+    : "unsupported";
+}
 export function installationContext(): InstallContext {
   return {
     packaged: app.isPackaged,
     platform: process.platform,
     arch: process.arch,
-    distribution:
-      typeof __NEDIA_UPDATE_DISTRIBUTION__ === "string"
-        ? __NEDIA_UPDATE_DISTRIBUTION__
-        : "unsupported",
-    executable: process.execPath,
+    distribution: updateDistribution(),
+    executable: IS_TAURI
+      ? process.env.NEDIA_TAURI_EXECUTABLE!
+      : process.execPath,
+    parentPid: IS_TAURI
+      ? Number(process.env.NEDIA_TAURI_PARENT_PID)
+      : undefined,
     portableExecutable: process.env.PORTABLE_EXECUTABLE_FILE,
     portableDirectory: process.env.PORTABLE_EXECUTABLE_DIR,
-    resources: process.resourcesPath,
-    userData: app.getPath("userData"),
+    resources: IS_TAURI
+      ? process.env.NEDIA_TAURI_RUNTIME!
+      : process.resourcesPath,
+    userData: businessDataDirectory(),
     currentVersion: app.getVersion(),
   };
 }
@@ -87,10 +107,7 @@ function updates(): UpdateController {
     target: {
       platform: process.platform,
       arch: process.arch,
-      distribution:
-        typeof __NEDIA_UPDATE_DISTRIBUTION__ === "string"
-          ? __NEDIA_UPDATE_DISTRIBUTION__
-          : "unsupported",
+      distribution: updateDistribution(),
     },
     keys,
     install: app.isPackaged
@@ -119,11 +136,11 @@ function updates(): UpdateController {
           }
         }
       : undefined,
-    cacheDirectory: join(app.getPath("userData"), "application-updates"),
+    cacheDirectory: join(businessDataDirectory(), "application-updates"),
     findLatestRelease: () =>
-      source.kind === "github"
-        ? findLatestRelease(undefined, "github", source.repository)
-        : findProtocolUpdate(source, keys),
+      source.kind === "manifest"
+        ? findProtocolUpdate(source, keys)
+        : findLatestRelease(undefined, source.kind, source.repository),
     onChange: (state) => {
       state.revision = ++revision;
       for (const window of BrowserWindow.getAllWindows()) {
@@ -144,7 +161,7 @@ export const downloadApplicationUpdate = () => updates().download();
 export const cancelApplicationUpdateDownload = () =>
   controller?.cancel() ?? Promise.resolve();
 export async function showApplicationUpdateFile(): Promise<void> {
-  shell.showItemInFolder(await updates().verifiedDownloadedFile());
+  await shell.showItemInFolder(await updates().verifiedDownloadedFile());
 }
 
 export function checkForApplicationUpdateNow(): Promise<ApplicationUpdateCheckResult> {
@@ -158,9 +175,9 @@ export async function openApplicationUpdateDownload(
     desktopPreferences().get().updates.sourceUrl,
   );
   const pageUrl =
-    source.kind === "github"
-      ? releasePageUrl(version, "github", source.repository)
-      : (controller?.signedDownloadUrl(version) ?? source.url);
+    source.kind === "manifest"
+      ? (controller?.signedDownloadUrl(version) ?? source.url)
+      : releasePageUrl(version, source.kind, source.repository);
   if (!pageUrl) throw new TypeError("Application update version is invalid");
   await shell.openExternal(pageUrl);
 }

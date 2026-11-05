@@ -57,6 +57,17 @@ export class MediaSelectionStore {
     };
   }
 
+  referencedPaths(): ReadonlySet<string> {
+    this.prune();
+    return new Set(
+      [...this.selections.values()].flatMap(({ files }) =>
+        files.flatMap(({ localRelativePath }) =>
+          localRelativePath ? [localRelativePath] : [],
+        ),
+      ),
+    );
+  }
+
   release(id: string): void {
     const selection = this.selections.get(id);
     if (selection) selection.inUse = false;

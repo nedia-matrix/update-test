@@ -4,7 +4,7 @@ import { fetchUpdateAsset, readBoundedResponse } from "./update-network.js";
 import type { UpdateManifest } from "./update-manifest.js";
 const updateRepository = "nedia-matrix/desktop";
 
-export type ApplicationUpdateSource = "github" | "manifest";
+export type ApplicationUpdateSource = "github" | "gitee" | "manifest";
 
 const UPDATE_SOURCES = {
   github: {
@@ -73,6 +73,71 @@ function releaseFromTag(tag: unknown): ApplicationRelease | null {
   };
 }
 
+function releaseAssets(assets: unknown): ApplicationRelease["assets"] {
+  if (!Array.isArray(assets)) return undefined;
+  return assets.flatMap((asset: unknown) => {
+    if (
+      typeof asset !== "object" ||
+      asset === null ||
+      !("name" in asset) ||
+      !("browser_download_url" in asset)
+    )
+      return [];
+    return typeof asset.name === "string" &&
+      typeof asset.browser_download_url === "string"
+      ? [{ name: asset.name, url: asset.browser_download_url }]
+      : [];
+  });
+}
+
+async function findGiteeRelease(
+  fetcher: typeof fetch,
+  repository: string,
+): Promise<ApplicationRelease> {
+  const signal = AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS);
+  let latest: ApplicationRelease | undefined;
+  // Gitee's /latest means most recently updated and has no draft concept.
+  // Enumerate stable releases so unfinished staging records cannot mask one.
+  for (let page = 1; page <= 10; page++) {
+    const response = await fetchUpdateAsset(
+      `https://gitee.com/api/v5/repos/${repository}/releases?per_page=100&page=${page}&direction=desc`,
+      "gitee",
+      signal,
+      fetcher,
+      { Accept: "application/json", "User-Agent": "NediaMatrix-update-check" },
+    );
+    const entries: unknown = JSON.parse(
+      Buffer.from(
+        await readBoundedResponse(response, 512 * 1024, signal),
+      ).toString("utf8"),
+    );
+    if (!Array.isArray(entries)) throw new Error("Gitee 发行列表无效");
+    for (const entry of entries) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        entry.prerelease === true ||
+        entry.draft === true
+      )
+        continue;
+      const candidate = releaseFromTag(entry.tag_name);
+      if (
+        candidate &&
+        (!latest || isNewerVersion(candidate.version, latest.version))
+      ) {
+        const assets = releaseAssets(entry.assets);
+        if (assets) candidate.assets = assets;
+        latest = candidate;
+      }
+    }
+    if (entries.length < 100) {
+      if (!latest) throw new Error("Gitee 没有已发布的稳定版本");
+      return latest;
+    }
+  }
+  throw new Error("Gitee 发行列表超过检查预算");
+}
+
 export function releasePageUrl(
   version: string,
   source: ApplicationUpdateSource = configuredUpdateSource(),
@@ -81,6 +146,8 @@ export function releasePageUrl(
   const parsedVersion = parseVersion(version);
   if (!parsedVersion) return null;
 
+  if (source === "gitee")
+    return `https://gitee.com/${repository}/releases#release-v${parsedVersion.join(".")}`;
   if (source !== "github") return null;
   return `https://github.com/${repository}/releases/tag/v${parsedVersion.join(".")}`;
 }
@@ -90,12 +157,13 @@ export async function findLatestRelease(
   source: ApplicationUpdateSource = configuredUpdateSource(),
   repository: string = updateRepository,
 ): Promise<ApplicationRelease> {
+  if (source === "gitee") return findGiteeRelease(fetcher, repository);
   if (source !== "github") throw new Error("协议更新源需读取受信清单");
   const configuration = UPDATE_SOURCES.github;
   const signal = AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS);
   const response = await fetchUpdateAsset(
     `https://api.github.com/repos/${repository}/releases/latest`,
-    "github",
+    source,
     signal,
     fetcher,
     { ...configuration.headers },
@@ -133,19 +201,7 @@ export async function findLatestRelease(
     "assets" in payload &&
     Array.isArray(payload.assets)
   ) {
-    release.assets = payload.assets.flatMap((asset: unknown) => {
-      if (
-        typeof asset !== "object" ||
-        asset === null ||
-        !("name" in asset) ||
-        !("browser_download_url" in asset)
-      )
-        return [];
-      return typeof asset.name === "string" &&
-        typeof asset.browser_download_url === "string"
-        ? [{ name: asset.name, url: asset.browser_download_url }]
-        : [];
-    });
+    release.assets = releaseAssets(payload.assets) ?? [];
   }
   return release;
 }

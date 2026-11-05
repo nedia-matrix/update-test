@@ -17,6 +17,9 @@ import (
 	"time"
 )
 
+var applicationID = "com.nediamatrix.desktop"
+var applicationName = "NediaMatrix"
+
 type Request struct {
 	ID             string `json:"id"`
 	ParentPID      int    `json:"parentPid"`
@@ -143,7 +146,7 @@ func load(requestFile string, recovery bool) (*Installer, error) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, err
 	}
-	if len(r.ID) != 36 || strings.ContainsAny(r.ID, `/\`) || r.ParentPID < 1 || r.AppID != "com.nediamatrix.desktop" || r.Size <= 0 || len(r.SHA256) != 64 {
+	if len(r.ID) != 36 || strings.ContainsAny(r.ID, `/\`) || r.ParentPID < 1 || r.AppID != applicationID || r.Size <= 0 || len(r.SHA256) != 64 {
 		return nil, errors.New("invalid request identity")
 	}
 	if err := canonical(r.Package); err != nil {
@@ -213,7 +216,7 @@ func extractApp(source, destination string, budget uint64) error {
 			return errors.New("unsafe ZIP path")
 		}
 		clean := strings.TrimSuffix(name, "/")
-		if clean != filepath.ToSlash(filepath.Clean(clean)) || (clean != "NediaMatrix.app" && !strings.HasPrefix(clean, "NediaMatrix.app/")) {
+		if clean != filepath.ToSlash(filepath.Clean(clean)) || (clean != applicationName+".app" && !strings.HasPrefix(clean, applicationName+".app/")) {
 			return errors.New("ZIP must contain only NediaMatrix.app")
 		}
 		key := strings.ToLower(clean)
@@ -295,7 +298,7 @@ func extractApp(source, destination string, budget uint64) error {
 		}
 		link := filepath.Join(destination, filepath.FromSlash(f.Name))
 		target := string(data)
-		bundle := filepath.Join(destination, "NediaMatrix.app")
+		bundle := filepath.Join(destination, applicationName+".app")
 		if filepath.IsAbs(target) || !within(bundle, filepath.Join(filepath.Dir(link), target)) {
 			return errors.New("symlink escapes bundle")
 		}
@@ -309,7 +312,7 @@ func extractApp(source, destination string, budget uint64) error {
 	// Resolve chains to reject indirect escapes, broken links and cycles.
 	for _, f := range links {
 		real, err := filepath.EvalSymlinks(filepath.Join(destination, filepath.FromSlash(f.Name)))
-		if err != nil || !within(filepath.Join(destination, "NediaMatrix.app"), real) {
+		if err != nil || !within(filepath.Join(destination, applicationName+".app"), real) {
 			return errors.New("invalid bundle symlink chain")
 		}
 	}
@@ -352,7 +355,7 @@ func (i *Installer) prepare() error {
 		if err := extractApp(r.Package, extraction, uint64(r.Size)*5); err != nil {
 			return err
 		}
-		bundle := filepath.Join(extraction, "NediaMatrix.app")
+		bundle := filepath.Join(extraction, applicationName+".app")
 		if err := validateBundle(bundle, r); err != nil {
 			return err
 		}
@@ -597,6 +600,21 @@ func (i *Installer) recover() error {
 	}
 }
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--verify-portable-backup" {
+		path := os.Args[2]
+		err := canonical(path)
+		if err == nil {
+			err = regular(path)
+		}
+		if err == nil {
+			err = validatePortableBackup(path)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	recovery := len(os.Args) == 3 && os.Args[1] == "--recover"
 	if len(os.Args) != 2 && !recovery {
 		fmt.Fprintln(os.Stderr, "usage: nedia-update-helper [--recover] <request.json>")

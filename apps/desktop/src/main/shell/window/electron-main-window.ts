@@ -16,6 +16,11 @@ export class ElectronMainWindow {
     private readonly onLoadSuccess?: () => void,
   ) {}
 
+  sendTasksChanged(): void {
+    if (this.window && !this.window.isDestroyed())
+      this.window.webContents.send(ipcChannels.tasksChanged);
+  }
+
   open(): void {
     if (this.window && !this.window.isDestroyed()) {
       this.window.show();

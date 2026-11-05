@@ -9,7 +9,6 @@ export interface PluginAbortSignal extends PublishAbortSignal {
 }
 
 /** Publication version is provenance only. Protocol revisions control compatibility. */
-export const platformPluginProtocol = 1;
 export interface PlatformPluginSource {
   readonly pluginId: string;
   readonly pluginVersion: string;

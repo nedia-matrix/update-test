@@ -68,7 +68,6 @@ export function BrowserOnboarding() {
           </button>
           <button
             type="button"
-            class="primary-button"
             disabled={state?.dismissPending}
             onClick={() => {
               controller.current?.hide();

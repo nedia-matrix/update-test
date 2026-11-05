@@ -5,9 +5,11 @@ export type PlatformSettings = Readonly<Record<string, string>>;
 export interface PlatformSelectSetting {
   readonly type: "select";
   readonly label: string;
+  readonly description?: string;
   readonly options: readonly {
     readonly value: string;
     readonly label: string;
+    readonly description?: string;
   }[];
   readonly default: string;
 }
@@ -60,6 +62,9 @@ export function validateSettingDefinitions(
       setting.type !== "select" ||
       typeof setting.label !== "string" ||
       !setting.label.trim() ||
+      (setting.description !== undefined &&
+        (typeof setting.description !== "string" ||
+          !setting.description.trim())) ||
       !Array.isArray(setting.options) ||
       !setting.options.length
     )
@@ -72,6 +77,9 @@ export function validateSettingDefinitions(
         !option.value ||
         typeof option.label !== "string" ||
         !option.label.trim() ||
+        (option.description !== undefined &&
+          (typeof option.description !== "string" ||
+            !option.description.trim())) ||
         values.has(option.value)
       )
         throw new TypeError("Invalid platform setting option");

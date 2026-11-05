@@ -1,0 +1,20 @@
+{
+  "name": "@nedia-matrix/tauri",
+  "private": true,
+  "version": "0.7.3",
+  "type": "module",
+  "scripts": {
+    "dev": "node run.mjs dev",
+    "package": "node run.mjs package",
+    "build:assets": "node build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "verify:smoke": "node scripts/smoke.mjs",
+    "verify:publish": "node scripts/smoke.mjs --publish"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

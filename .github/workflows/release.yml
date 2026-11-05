@@ -13,7 +13,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  configuration:
+    name: Validate release versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+      - id: release
+        run: node scripts/publish/release-config.mjs "$GITHUB_REF_NAME"
+      - name: Require Gitee publication configuration
+        run: |
+          node --input-type=module -e 'import { giteeRepository } from "./scripts/publish/gitee-release.mjs"; giteeRepository(process.env.NEDIA_GITEE_REPOSITORY); if (!process.env.NEDIA_GITEE_TOKEN?.trim()) throw new Error("Releases require NEDIA_GITEE_TOKEN");'
+        env:
+          NEDIA_GITEE_REPOSITORY: ${{ vars.NEDIA_GITEE_REPOSITORY }}
+          NEDIA_GITEE_TOKEN: ${{ secrets.NEDIA_GITEE_TOKEN }}
+
   build:
+    needs: configuration
     name: Build ${{ matrix.platform }} package
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -46,7 +64,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24.18.0
           cache: pnpm
 
       - name: Verify release version
@@ -73,6 +91,12 @@ jobs:
         working-directory: apps/desktop/installer
         run: go test ./...
 
+      - name: Set up MSVC for the runtime lock
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Build platform dependencies
         run: pnpm desktop:build-dependencies
 
@@ -87,6 +111,7 @@ jobs:
         run: ${{ matrix.package_command }}
         env:
           NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
+          NEDIA_DEFAULT_UPDATE_SOURCE_URL: https://github.com/${{ github.repository }}
           NEDIA_REQUIRE_UPDATE_KEYS: "1"
 
       - name: Upload package artifact
@@ -94,6 +119,62 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+  tauri:
+    needs: configuration
+    name: Build Tauri ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS ARM64
+            runner: macos-latest
+            artifact: tauri-mac-arm64
+          - platform: macOS Intel
+            runner: macos-15-intel
+            artifact: tauri-mac-x64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/desktop/installer/go.mod
+          cache: false
+      - name: Test shared update helper
+        working-directory: apps/desktop/installer
+        run: go test ./...
+      - name: Prepare Rust
+        run: rustup update stable --no-self-update
+      - name: Verify release version
+        shell: bash
+        run: |
+          node scripts/publish/release-config.mjs "$GITHUB_REF_NAME"
+      - run: pnpm install --frozen-lockfile
+      - name: Build platform dependencies
+        run: pnpm desktop:build-dependencies
+      - name: Build and sign platform plugins
+        run: pnpm --filter @nedia-matrix/desktop plugins:build
+        env:
+          NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
+          NEDIA_UPDATE_KEY_ID: ${{ vars.NEDIA_UPDATE_KEY_ID }}
+          NEDIA_UPDATE_PRIVATE_KEY: ${{ secrets.NEDIA_UPDATE_PRIVATE_KEY }}
+      - name: Package Tauri application
+        run: pnpm tauri:package
+        env:
+          NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
+          NEDIA_REQUIRE_UPDATE_KEYS: "1"
+          NEDIA_DEFAULT_UPDATE_SOURCE_URL: https://gitee.com/${{ vars.NEDIA_GITEE_REPOSITORY }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: apps/tauri/dist-installers/*
           if-no-files-found: error
           retention-days: 7
 
@@ -111,16 +192,23 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24.18.0
 
       - name: Download installer artifacts
         uses: actions/download-artifact@v8
         with:
+          name: mac-installers
           path: release-assets
-          merge-multiple: true
+
+      - name: Download Windows Electron packages
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-packages
+          path: release-assets
 
       - name: Generate trusted update manifest
-        run: node scripts/publish/update-manifest.mjs release-assets "${GITHUB_REF_NAME#v}" github
+        run: |
+          node scripts/publish/update-manifest.mjs release-assets "${GITHUB_REF_NAME#v}" github "$GITHUB_REPOSITORY" electron
         env:
           NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
           NEDIA_UPDATE_KEY_ID: ${{ vars.NEDIA_UPDATE_KEY_ID }}
@@ -130,7 +218,7 @@ jobs:
         shell: bash
         run: |
           cd release-assets
-          sha256sum -- *.dmg *.zip *.exe update-manifest.json update-manifest.sig > SHA256SUMS.txt
+          sha256sum -- *.dmg *.zip *.exe *update-manifest.json *update-manifest.sig > SHA256SUMS.txt
 
       - name: Upload and verify draft, then publish
         env:
@@ -143,9 +231,38 @@ jobs:
             exit 1
           fi
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes
-          gh release upload "$GITHUB_REF_NAME" release-assets/*.dmg release-assets/*.zip release-assets/*.exe release-assets/update-manifest.json release-assets/update-manifest.sig release-assets/SHA256SUMS.txt
+          gh release upload "$GITHUB_REF_NAME" release-assets/*.dmg release-assets/*.zip release-assets/*.exe release-assets/*update-manifest.json release-assets/*update-manifest.sig release-assets/SHA256SUMS.txt
           verification_directory=$(mktemp -d)
           gh release download "$GITHUB_REF_NAME" --dir "$verification_directory"
           cd "$verification_directory"
           sha256sum --check SHA256SUMS.txt
           gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"
+
+  gitee:
+    name: Publish and verify Gitee Release
+    needs: [release, tauri]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: tauri-mac-*
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-packages
+          path: release-assets
+      - name: Upload, verify public downloads, then finalize Gitee release
+        run: node scripts/publish/gitee-release.mjs --publish release-assets "${GITHUB_REF_NAME#v}" mixed "$GITEE_REPOSITORY" "$GITHUB_SHA" --sync-public-tag
+        env:
+          GITEE_REPOSITORY: ${{ vars.NEDIA_GITEE_REPOSITORY }}
+          NEDIA_GITEE_TOKEN: ${{ secrets.NEDIA_GITEE_TOKEN }}
+          NEDIA_UPDATE_PUBLIC_KEYS: ${{ vars.NEDIA_UPDATE_PUBLIC_KEYS }}
+          NEDIA_UPDATE_KEY_ID: ${{ vars.NEDIA_UPDATE_KEY_ID }}
+          NEDIA_UPDATE_PRIVATE_KEY: ${{ secrets.NEDIA_UPDATE_PRIVATE_KEY }}

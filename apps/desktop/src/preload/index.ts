@@ -30,11 +30,40 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { AccountBrowserRuntime } from "../bridge/account-browser-runtime.js";
 
 const api: MatrixDesktopApi = {
+  tasks: {
+    clearHistory: (request) =>
+      ipcRenderer.invoke(ipcChannels.clearTaskHistory, request),
+    settings: () => ipcRenderer.invoke(ipcChannels.getTaskSettings),
+    setRetentionDays: (value) =>
+      ipcRenderer.invoke(ipcChannels.setTaskRetentionDays, value),
+    summary: () => ipcRenderer.invoke(ipcChannels.getTaskSummary),
+    acknowledgeAttention: (items) =>
+      ipcRenderer.invoke(ipcChannels.acknowledgeTaskAttention, items),
+    query: (request) =>
+      ipcRenderer.invoke(ipcChannels.queryScheduledTasks, request),
+    byRequest: (id) => ipcRenderer.invoke(ipcChannels.getTaskByRequest, id),
+    get: (id) => ipcRenderer.invoke(ipcChannels.getScheduledTask, id),
+    cancel: (id) => ipcRenderer.invoke(ipcChannels.cancelScheduledTask, id),
+    enqueueSync: (request) =>
+      ipcRenderer.invoke(ipcChannels.enqueueSyncTask, request),
+    rules: (accountId) =>
+      ipcRenderer.invoke(ipcChannels.getSyncRules, accountId),
+    setRule: (request) => ipcRenderer.invoke(ipcChannels.setSyncRule, request),
+    setMaxParallel: (value) =>
+      ipcRenderer.invoke(ipcChannels.setTaskMaxParallel, value),
+  },
+  onTasksChanged: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(ipcChannels.tasksChanged, handler);
+    return () => ipcRenderer.removeListener(ipcChannels.tasksChanged, handler);
+  },
   listPlugins: () => ipcRenderer.invoke(ipcChannels.listPlugins),
   listBundledPlugins: () => ipcRenderer.invoke(ipcChannels.listBundledPlugins),
   installBundledPlugin: (id) =>
     ipcRenderer.invoke(ipcChannels.installBundledPlugin, id),
   installPlugin: () => ipcRenderer.invoke(ipcChannels.installPlugin),
+  restartForPluginChanges: () =>
+    ipcRenderer.invoke(ipcChannels.restartForPluginChanges),
   changePlugin: (change) =>
     ipcRenderer.invoke(ipcChannels.changePlugin, change),
   setAccountSettings: (request) =>
@@ -182,6 +211,14 @@ const api: MatrixDesktopApi = {
       listener(update as PublishResultUpdate);
     });
   },
+  getLocalRuntimeSettings: () =>
+    ipcRenderer.invoke(ipcChannels.getLocalRuntimeSettings),
+  updateLocalRuntimeSettings: (request) =>
+    ipcRenderer.invoke(ipcChannels.updateLocalRuntimeSettings, request),
+  getRuntimeAccountAccess: (accountId) =>
+    ipcRenderer.invoke(ipcChannels.getRuntimeAccountAccess, accountId),
+  setRuntimeAccountAccess: (request) =>
+    ipcRenderer.invoke(ipcChannels.setRuntimeAccountAccess, request),
   getLocalRuntimeStatus: () =>
     ipcRenderer.invoke(ipcChannels.getLocalRuntimeStatus),
   setLocalRuntimeRunning: (request: SetLocalRuntimeRunningRequest) =>

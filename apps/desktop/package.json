@@ -1,12 +1,12 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.7.2",
+  "version": "0.7.3",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "build": "electron-vite build",
-    "dev": "pnpm plugins:dev && electron-vite dev",
+    "build": "node ../../scripts/package/build-runtime-lock.mjs && electron-vite build",
+    "dev": "node ../../scripts/package/build-runtime-lock.mjs && pnpm plugins:dev && electron-vite dev",
     "package:mac": "node ../../scripts/package/package-desktop.mjs mac",
     "package:win": "node ../../scripts/package/package-desktop.mjs win",
     "package:win:portable": "node ../../scripts/package/package-desktop.mjs win:portable",
@@ -93,8 +93,12 @@
       ],
       "extraResources": [
         {
-          "from": "resources/update-helper/nedia-update-helper",
+          "from": "resources/update-helper/${arch}/nedia-update-helper",
           "to": "update-helper/nedia-update-helper"
+        },
+        {
+          "from": "resources/native/darwin-${arch}",
+          "to": "native/darwin-${arch}"
         }
       ]
     },
@@ -112,10 +116,15 @@
         {
           "from": "resources/update-helper/nedia-update-helper.exe",
           "to": "update-helper/nedia-update-helper.exe"
+        },
+        {
+          "from": "resources/native/win32-${arch}",
+          "to": "native/win32-${arch}"
         }
       ]
     },
     "nsis": {
+      "include": "../../scripts/package/windows-installer.nsh",
       "artifactName": "${productName}-${version}-win-setup-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

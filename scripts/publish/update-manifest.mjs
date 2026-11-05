@@ -7,18 +7,20 @@ import {
   sign,
 } from "node:crypto";
 import { createReadStream, lstatSync, readFileSync } from "node:fs";
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { configuredPublicKeys } from "./update-keys.mjs";
 
-export function updateArtifactTargets(version) {
+export function updateArtifactTargets(version, shell = "electron") {
+  if (!["electron", "tauri", "mixed"].includes(shell))
+    throw new Error("未知桌面发行类型");
   if (
     !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version) ||
     !version.split(".").every((part) => Number.isSafeInteger(Number(part)))
   )
     throw new Error("必须指定稳定版本号");
-  return [
+  const targets = [
     {
       platform: "darwin",
       arch: "arm64",
@@ -44,6 +46,7 @@ export function updateArtifactTargets(version) {
       assetName: `NediaMatrix-${version}-win-portable-x64.exe`,
     },
   ];
+  return targets;
 }
 
 export async function sha256File(file) {
@@ -109,16 +112,36 @@ export async function generateUpdateManifest({
   source,
   repository = process.env.GITHUB_REPOSITORY || "nedia-matrix/desktop",
   environment = process.env,
+  shell = "electron",
+  outputDirectory = directory,
+  artifactUrls,
 }) {
-  if (source !== "github") throw new Error("更新源必须为 github");
+  if (source !== "github" && source !== "gitee")
+    throw new Error("更新源必须为 github 或 gitee");
+  if (
+    (source === "gitee" && shell !== "mixed") ||
+    (source === "github" && shell !== "electron")
+  )
+    throw new Error(
+      "Gitee 必须使用 mixed（macOS Tauri / Windows Electron）发行，GitHub 必须使用 electron（不接受 mixed 或 tauri）",
+    );
   const configuration = signingConfiguration(environment);
   if (
     !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
     [".", ".."].includes(repository.split("/")[1])
   )
-    throw new Error("GitHub 仓库必须为 owner/repository");
+    throw new Error("发布仓库必须为 owner/repository");
+  const targets = updateArtifactTargets(version, shell);
+  if (
+    artifactUrls &&
+    (source !== "gitee" ||
+      Object.keys(artifactUrls).length !== targets.length ||
+      targets.some(({ assetName }) => !Object.hasOwn(artifactUrls, assetName)))
+  )
+    throw new Error("Gitee 附件地址必须完整对应四类载荷");
   const artifacts = [];
-  for (const target of updateArtifactTargets(version)) {
+  const appId = "com.nediamatrix.desktop";
+  for (const target of targets) {
     const file = join(directory, target.assetName);
     const info = await lstat(file);
     if (
@@ -132,9 +155,14 @@ export async function generateUpdateManifest({
     const provenance = JSON.parse(
       await readFile(`${file}.provenance.json`, "utf8"),
     );
+    const expectedShell =
+      shell === "mixed"
+        ? { darwin: "tauri", win32: "electron" }[target.platform]
+        : shell;
     if (
+      provenance.shell !== expectedShell ||
       provenance.version !== version ||
-      provenance.appId !== "com.nediamatrix.desktop" ||
+      provenance.appId !== appId ||
       provenance.platform !== target.platform ||
       provenance.arch !== target.arch ||
       provenance.distribution !== target.distribution ||
@@ -151,12 +179,25 @@ export async function generateUpdateManifest({
   }
   const basename = "update-manifest";
   const document = {
-    appId: "com.nediamatrix.desktop",
+    appId,
     version,
-    artifacts: artifacts.map((artifact) => ({
-      ...artifact,
-      url: `https://github.com/${repository}/releases/download/v${version}/${encodeURIComponent(artifact.assetName)}`,
-    })),
+    artifacts: artifacts.map((artifact) => {
+      const url =
+        artifactUrls?.[artifact.assetName] ??
+        `https://${source === "github" ? "github.com" : "gitee.com"}/${repository}/releases/download/v${version}/${encodeURIComponent(artifact.assetName)}`;
+      if (artifactUrls) {
+        const prefix = `https://gitee.com/api/v5/repos/${repository}/releases/`;
+        if (
+          typeof url !== "string" ||
+          !url.startsWith(prefix) ||
+          !/^[1-9]\d*\/attach_files\/[1-9]\d*\/download$/.test(
+            url.slice(prefix.length),
+          )
+        )
+          throw new Error("Gitee 载荷须使用本仓库的固定附件下载 API");
+      }
+      return { ...artifact, url };
+    }),
   };
   const manifest = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
   const signature = {
@@ -166,8 +207,9 @@ export async function generateUpdateManifest({
       "base64",
     ),
   };
-  const manifestPath = join(directory, `${basename}.json`);
-  const signaturePath = join(directory, `${basename}.sig`);
+  await mkdir(outputDirectory, { recursive: true });
+  const manifestPath = join(outputDirectory, `${basename}.json`);
+  const signaturePath = join(outputDirectory, `${basename}.sig`);
   await writeFile(manifestPath, manifest);
   await writeFile(signaturePath, `${JSON.stringify(signature, null, 2)}\n`);
   return [manifestPath, signaturePath];
@@ -178,9 +220,9 @@ if (
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
   const args = process.argv.slice(2);
-  if (args.length !== 3 && args.length !== 4) {
+  if (args.length < 3 || args.length > 5) {
     console.error(
-      "用法：node scripts/publish/update-manifest.mjs <附件目录> <版本（不含v）> <github> [owner/repository]",
+      "用法：node scripts/publish/update-manifest.mjs <附件目录> <版本（不含v）> <github|gitee> [owner/repository] [electron|tauri|mixed]",
     );
     process.exitCode = 1;
   } else {
@@ -189,6 +231,7 @@ if (
       version: args[1],
       source: args[2],
       repository: args[3],
+      shell: args[4],
     })
       .then(() => {
         console.log("更新清单和 Ed25519 签名已生成。");

@@ -1,3 +1,8 @@
+import {
+  assertBrowserProfileUnoccupied,
+  hasBrowserProfileSingleton,
+} from "./browser-profile-occupancy.js";
+import { businessDataDirectory } from "../../runtime/desktop-data-paths.js";
 import type { AccountBrowserRuntime } from "../../../bridge/account-browser-runtime.js";
 import { rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -57,8 +62,8 @@ const defaults: Dependencies = {
   createPage: createManagedBrowserPage,
   detectSession: detectPlatformSession,
   removeProfileDirectory: rm,
-  profilesRoot: () => join(app.getPath("userData"), "browser-profiles"),
-  evidenceRoot: () => join(app.getPath("userData"), "diagnostics", "evidence"),
+  profilesRoot: () => join(businessDataDirectory(), "browser-profiles"),
+  evidenceRoot: () => join(businessDataDirectory(), "diagnostics", "evidence"),
 };
 
 export type OpenPlatformDataClient = (input: {
@@ -141,7 +146,18 @@ export class PlaywrightBrowserSessionHost {
     };
   }
 
+  isBrowserUnderMaintenance(): boolean {
+    return this.browserMaintenance !== undefined;
+  }
+
   isAccountBrowserBusy(accountId: string, profileId: string): boolean {
+    if (
+      !this.profiles.has(profileId) &&
+      hasBrowserProfileSingleton(
+        browserProfileDirectory(this.dependencies.profilesRoot(), profileId),
+      )
+    )
+      return true;
     return (
       this.transitions.has(profileId) ||
       [...this.profiles.entries()].some(
@@ -511,6 +527,8 @@ export class PlaywrightBrowserSessionHost {
         details: {
           purpose,
           browserChannel: entry.browser.channel,
+          browserVersion: entry.browser.browserVersion,
+          playwrightVersion: entry.browser.playwrightVersion,
           headless: entry.browser.headless,
         },
       });
@@ -1041,6 +1059,9 @@ export class PlaywrightBrowserSessionHost {
       if (entry && (entry.syncing || this.hasPublication(entry)))
         throw new Error("账号仍有活动任务，暂不能删除环境");
       if (entry) await entry.browser.close();
+      assertBrowserProfileUnoccupied(
+        browserProfileDirectory(this.dependencies.profilesRoot(), profileId),
+      );
       this.forgetProfile(profileId);
       await this.dependencies.removeProfileDirectory(
         browserProfileDirectory(this.dependencies.profilesRoot(), profileId),
@@ -1052,12 +1073,20 @@ export class PlaywrightBrowserSessionHost {
   async closeAll() {
     this.stopping = true;
     await Promise.allSettled(this.transitions.values());
-    await Promise.allSettled(
+    const closed = await Promise.allSettled(
       [...this.profiles.values()].map(async (entry) => {
         await entry.idle;
         await entry.browser.close();
       }),
     );
+    const failures = closed.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failures.length)
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        "账号浏览器未能全部关闭",
+      );
   }
   private async withProfileTransition<T>(
     profileId: string,

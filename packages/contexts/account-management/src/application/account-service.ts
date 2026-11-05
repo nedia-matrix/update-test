@@ -1,3 +1,4 @@
+import { PlatformSyncError } from "@nedia-matrix/platform-sdk";
 import {
   resolvePlatformSettings,
   type PlatformSettings,
@@ -129,7 +130,7 @@ export class AccountService {
   private readonly createId: () => string;
   private readonly now: () => Date;
   private readonly sessionDetector: SessionDetectionPort["detect"];
-  private readonly recognitionTokens = new Map<string, symbol>();
+  private readonly recognitionTokens = new Map<string, AbortController>();
   private readonly recognitionCancels = new Map<string, () => void>();
   private readonly verificationTransitions = new Map<string, Promise<void>>();
   private readonly recognitionIntervalMs: number;
@@ -404,7 +405,11 @@ export class AccountService {
     const { account } = this.resolveAccount(request);
     this.assertAvailable(account.id);
     if (account.lifecycle !== "active" || account.externalAccountId === null) {
-      throw new Error("请先完成平台账号登录识别");
+      throw new PlatformSyncError({
+        code: "authentication",
+        message: "请先完成平台账号登录识别",
+        retryable: false,
+      });
     }
     const platform = resolveAccountPlatform(
       this.dependencies.platforms,
@@ -417,7 +422,12 @@ export class AccountService {
     );
     try {
       const accountProfile = platform.accountProfile;
-      if (!accountProfile) throw new Error("该平台暂不支持账号资料刷新");
+      if (!accountProfile)
+        throw new PlatformSyncError({
+          code: "unsupported",
+          message: "该平台暂不支持账号资料刷新",
+          retryable: false,
+        });
       const profile = await this.withVerificationTransition(
         account.id,
         async () => {
@@ -451,11 +461,17 @@ export class AccountService {
               detected,
             );
             if (verified.status !== "authenticated") {
-              throw new Error(
-                verified.status === "login_required"
-                  ? "平台账号未登录"
-                  : verified.reason,
-              );
+              throw new PlatformSyncError({
+                code:
+                  verified.status === "login_required"
+                    ? "authentication"
+                    : "verification_required",
+                message:
+                  verified.status === "login_required"
+                    ? "平台账号未登录"
+                    : verified.reason,
+                retryable: false,
+              });
             }
             this.reportDiagnostic(trace, {
               component: "account",
@@ -469,7 +485,19 @@ export class AccountService {
             });
             return result;
           } finally {
-            await verification.close();
+            try {
+              await verification.close();
+            } catch (error) {
+              throw new PlatformSyncError(
+                {
+                  code: "resource_close_failed",
+                  message: "资料同步页面关闭失败",
+                  retryable: false,
+                  resourcesClosed: false,
+                },
+                { cause: error },
+              );
+            }
           }
         },
       );
@@ -479,7 +507,11 @@ export class AccountService {
         current.identityScheme !== account.identityScheme ||
         current.externalAccountId !== account.externalAccountId
       ) {
-        throw new Error("账号身份在资料刷新期间发生变化");
+        throw new PlatformSyncError({
+          code: "identity_mismatch",
+          message: "账号身份在资料刷新期间发生变化",
+          retryable: false,
+        });
       }
       const aggregate = PlatformAccount.rehydrate(current);
       aggregate.updateProfile(profileItems(profile), this.now().toISOString());
@@ -753,26 +785,26 @@ export class AccountService {
     platform: PlatformModule,
     opened: OpenedAccountSession,
   ): void {
-    const token = Symbol(accountId);
+    this.cancelAutomaticRecognition(accountId);
+    const token = new AbortController();
     this.recognitionTokens.set(accountId, token);
-    void this.runAutomaticRecognition(
-      accountId,
-      platform,
-      opened,
-      token,
-    ).finally(() => {
-      if (this.recognitionTokens.get(accountId) === token) {
-        this.recognitionTokens.delete(accountId);
-      }
-      this.recognitionCancels.delete(accountId);
-    });
+    void this.runAutomaticRecognition(accountId, platform, opened, token)
+      .catch((error: unknown) => {
+        console.error("Automatic account recognition failed", error);
+      })
+      .finally(() => {
+        if (this.recognitionTokens.get(accountId) === token) {
+          this.recognitionTokens.delete(accountId);
+          this.recognitionCancels.delete(accountId);
+        }
+      });
   }
 
   private async runAutomaticRecognition(
     accountId: string,
     platform: PlatformModule,
     opened: OpenedAccountSession,
-    token: symbol,
+    token: AbortController,
   ): Promise<void> {
     if (
       platform.accounts.detection.probes.some(
@@ -809,7 +841,11 @@ export class AccountService {
       } catch {
         // Page transitions are expected while the user completes login.
       }
-      if (this.recognitionTokens.get(accountId) !== token) return;
+      if (
+        this.recognitionTokens.get(accountId) !== token ||
+        opened.page.isClosed()
+      )
+        return;
       if (detected?.status === "authenticated") {
         const account = this.dependencies.accountStore.get(accountId);
         if (!account) return;
@@ -817,6 +853,10 @@ export class AccountService {
           const result = await this.identities.reconcileCandidate(
             accountId,
             detected,
+            {
+              signal: token.signal,
+              isCandidateOpen: () => !opened.page.isClosed(),
+            },
           );
           if (!result.retry) return;
         } else {
@@ -836,9 +876,10 @@ export class AccountService {
     accountId: string,
     platform: PlatformModule,
     opened: OpenedAccountSession,
-    token: symbol,
+    token: AbortController,
   ): Promise<void> {
-    return new Promise((resolve) => {
+    let reconciliation: Promise<void> | undefined;
+    const stopped = new Promise<void>((resolve) => {
       let finished = false;
       let inspecting = false;
       let inspectAgain = false;
@@ -868,9 +909,14 @@ export class AccountService {
         resolve();
       };
 
+      const isCurrent = () =>
+        !finished &&
+        this.recognitionTokens.get(accountId) === token &&
+        !opened.page.isClosed();
       const reconcile = async (
         detected: Extract<SessionDetection, { status: "authenticated" }>,
       ) => {
+        if (!isCurrent()) return finish();
         const account = this.dependencies.accountStore.get(accountId);
         if (!account) return finish();
         if (account.lifecycle !== "pending_identity") {
@@ -880,17 +926,31 @@ export class AccountService {
         const result = await this.identities.reconcileCandidate(
           accountId,
           detected,
+          {
+            signal: token.signal,
+            isCandidateOpen: () => !opened.page.isClosed(),
+          },
         );
-        if (!result.retry) return finish();
+        if (!isCurrent() || !result.retry) return finish();
         retryTimer = setTimeout(
-          () => void reconcile(detected),
+          () => void startReconciliation(detected),
           this.recognitionIntervalMs,
         );
         unrefTimer(retryTimer);
       };
 
+      const startReconciliation = (
+        detected: Extract<SessionDetection, { status: "authenticated" }>,
+      ) => {
+        reconciliation = reconcile(detected).catch((error: unknown) => {
+          console.error("Automatic account reconciliation failed", error);
+          finish();
+        });
+        return reconciliation;
+      };
+
       const inspect = async () => {
-        if (finished || this.recognitionTokens.get(accountId) !== token) {
+        if (!isCurrent()) {
           return finish();
         }
         if (inspecting) {
@@ -910,8 +970,9 @@ export class AccountService {
             } catch {
               lastDetected = undefined;
             }
+            if (!isCurrent()) return finish();
             if (lastDetected?.status === "authenticated") {
-              await reconcile(lastDetected);
+              await startReconciliation(lastDetected);
               return;
             }
           } while (inspectAgain && !finished);
@@ -928,7 +989,9 @@ export class AccountService {
         opened.page.once("close", finish);
       }
       const deadlineTimer = setTimeout(() => {
-        if (lastDetected) {
+        const current = isCurrent();
+        token.abort();
+        if (current && lastDetected) {
           this.identities.persistAutomatic(accountId, lastDetected);
         }
         finish();
@@ -937,9 +1000,11 @@ export class AccountService {
       this.recognitionCancels.set(accountId, finish);
       void inspect();
     });
+    return stopped.finally(() => reconciliation);
   }
 
   private cancelAutomaticRecognition(accountId: string): void {
+    this.recognitionTokens.get(accountId)?.abort();
     this.recognitionCancels.get(accountId)?.();
     this.recognitionCancels.delete(accountId);
     this.recognitionTokens.delete(accountId);

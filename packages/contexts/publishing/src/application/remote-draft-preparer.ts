@@ -116,33 +116,9 @@ export async function prepareRemoteDraft<Result>(
     ) {
       dependencies.mediaSelections.consume(selectionId);
     }
-    await releaseAssetsWithoutPublication(requestId, downloaded, dependencies);
     return result;
   } catch (error) {
     dependencies.mediaSelections.consume(selectionId);
-    await releaseAssetsWithoutPublication(requestId, downloaded, dependencies);
     throw error;
   }
-}
-
-async function releaseAssetsWithoutPublication(
-  requestId: string,
-  downloaded: Awaited<
-    ReturnType<RemoteDraftDependencies["remoteAssets"]["download"]>
-  >,
-  dependencies: RemoteDraftDependencies,
-): Promise<void> {
-  const publications = dependencies.publishing.list();
-  if (publications.some((record) => record.requestId === requestId)) return;
-  const referencedRelativePaths = new Set(
-    publications.flatMap((record) =>
-      record.assets.flatMap(({ localRelativePath }) =>
-        localRelativePath === null ? [] : [localRelativePath],
-      ),
-    ),
-  );
-  await dependencies.remoteAssets.discardUnreferenced(
-    downloaded,
-    referencedRelativePaths,
-  );
 }

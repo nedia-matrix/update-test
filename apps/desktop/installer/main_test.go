@@ -118,3 +118,13 @@ func TestTreeDigestDetectsChangedFilesAndModes(t *testing.T) {
 		t.Fatal("mutation invisible")
 	}
 }
+
+func TestPortableBackupInspectionRejectsNonExecutable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "NediaMatrix.exe.nedia-backup-12345678-1234-1234-1234-123456789abc")
+	if err := os.WriteFile(path, []byte("not a Windows executable"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePortableBackup(path); err == nil {
+		t.Fatal("accepted a non-PE backup")
+	}
+}

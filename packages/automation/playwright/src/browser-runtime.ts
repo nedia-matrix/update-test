@@ -1,3 +1,4 @@
+import { browserProfileCompatibilityFile } from "./browser-profile-compatibility.js";
 import { randomInt, randomUUID, createHash } from "node:crypto";
 import {
   access,
@@ -11,7 +12,7 @@ import { constants, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, rm } from "node:fs/promises";
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 
 export interface BrowserRuntimeConfiguration {
   provider: "system" | "fingerprint";
@@ -167,14 +168,14 @@ export async function loadBrowserRuntime(
   }
 }
 
-/** Runtime and seed live with the profile and survive application restarts. */
-async function readBrowserRuntime(
+/** Preview pinned identity without writes, backups, or browser probes. */
+export async function previewBrowserRuntime(
   directory: string,
   requested?: BrowserRuntimeConfiguration,
-): Promise<StoredBrowserRuntime> {
+): Promise<{ runtime: StoredBrowserRuntime; needsSave: boolean }> {
   requested ??= browserRuntimeFromEnvironment();
   const stored = await readStoredBrowserRuntime(directory);
-  if (stored && !requested) return stored;
+  if (stored && !requested) return { runtime: stored, needsSave: false };
   if (stored && requested?.provider === stored.provider) {
     if (
       requested.executablePath &&
@@ -188,13 +189,25 @@ async function readBrowserRuntime(
       (requested.timezoneId && requested.timezoneId !== stored.timezoneId)
     )
       throw new Error("Browser environment is pinned to this account profile");
-    return stored;
+    return { runtime: stored, needsSave: false };
   }
   if (stored && requested?.provider === "system")
     throw new Error(
       "Fingerprint profiles cannot silently fall back to a system browser; restore the saved profile backup or use a new profile",
     );
-  const runtime = newBrowserRuntime(requested, stored);
+  return { runtime: newBrowserRuntime(requested, stored), needsSave: true };
+}
+
+/** Runtime and seed live with the profile and survive application restarts. */
+async function readBrowserRuntime(
+  directory: string,
+  requested?: BrowserRuntimeConfiguration,
+): Promise<StoredBrowserRuntime> {
+  const { runtime, needsSave } = await previewBrowserRuntime(
+    directory,
+    requested,
+  );
+  if (!needsSave) return runtime;
   if (runtime.provider === "fingerprint") {
     await verifyFingerprintBrowser(runtime.executablePath!);
     // Browser vendors/versions must not mutate the only copy of an existing profile.
@@ -202,7 +215,9 @@ async function readBrowserRuntime(
     if (
       entries.some(
         (name) =>
-          name !== metadataName && !name.startsWith(".nedia-browser-runtime"),
+          name !== metadataName &&
+          name !== browserProfileCompatibilityFile &&
+          !name.startsWith(".nedia-browser-runtime"),
       )
     ) {
       const backup = `${directory}.before-fingerprint-${randomUUID()}`;

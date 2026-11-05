@@ -20,7 +20,7 @@ export {
   createPlaywrightSessionProbeClient,
   type PlaywrightSessionProbeClient,
 } from "./session-probe-client.js";
-export type { Response as PlaywrightResponse } from "playwright";
+export type { Response as PlaywrightResponse } from "playwright-core";
 export {
   createManagedBrowserPage,
   type ManagedBrowserPage,
@@ -53,3 +53,9 @@ export {
   contextRequestPacer,
   retryAfterMilliseconds,
 } from "./request-pacing.js";
+
+export {
+  BrowserProfileCompatibilityError,
+  playwrightRuntimeVersion,
+  readBrowserProfileRequirements,
+} from "./browser-profile-compatibility.js";

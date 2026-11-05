@@ -1,1 +1,1 @@
-import "./bootstrap/start-desktop.js";
+import "./bootstrap/desktop-entry.js";

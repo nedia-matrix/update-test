@@ -129,11 +129,15 @@ export class AccountIdentityService {
   async reconcileCandidate(
     candidateAccountId: string,
     detected: AuthenticatedDetection,
+    options: { signal?: AbortSignal; isCandidateOpen?(): boolean } = {},
   ): Promise<CandidateReconciliationResult> {
+    const isCurrent = () =>
+      !options.signal?.aborted && (options.isCandidateOpen?.() ?? true);
     const initialCandidate =
       this.dependencies.accountStore.require(candidateAccountId);
     const identity = identityOf(initialCandidate.platformId, detected);
     return this.withIdentityTransition(identity, async () => {
+      if (!isCurrent()) return { detection: detected, retry: false };
       const candidate = this.dependencies.accountStore.get(candidateAccountId);
       if (!candidate) return { detection: detected, retry: false };
       if (candidate.lifecycle !== "pending_identity") {
@@ -185,9 +189,11 @@ export class AccountIdentityService {
       }
 
       await this.dependencies.browserSessions.closeAutomation(survivingAccount);
+      if (!isCurrent()) return { detection: detected, retry: false };
       await this.dependencies.browserSessions.closeAutomation(candidate);
 
       if (
+        options.signal?.aborted ||
         this.dependencies.isAccountBusy?.(survivingAccount.id) ||
         this.dependencies.isAccountBusy?.(candidate.id) ||
         !this.dependencies.accountStore.get(candidate.id) ||

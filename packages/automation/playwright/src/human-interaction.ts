@@ -1,4 +1,4 @@
-import type { ElementHandle, Locator, Page } from "playwright";
+import type { ElementHandle, Locator, Page } from "playwright-core";
 
 type ClickTarget = Locator | ElementHandle;
 export interface Point {

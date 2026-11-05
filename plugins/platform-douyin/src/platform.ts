@@ -240,8 +240,16 @@ export const douyinPlatformModule = definePlatformModule({
       type: "select",
       label: "发布提交方式",
       options: [
-        { value: "automatic", label: "自动提交" },
-        { value: "manual_confirmation", label: "人工确认" },
+        {
+          value: "automatic",
+          label: "自动提交",
+          description: "自动填写内容后自动提交",
+        },
+        {
+          value: "manual_confirmation",
+          label: "人工确认",
+          description: "自动填写内容后可检查内容再手动提交",
+        },
       ],
       default: "manual_confirmation",
     },

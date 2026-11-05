@@ -1,3 +1,9 @@
+import { TaskSettings } from "../components/task-settings.js";
+import {
+  SettingsSection,
+  SettingsHeader,
+} from "../components/settings-primitives.js";
+import { RuntimeAccessSettings } from "../components/runtime-access-settings.js";
 import { PlatformPluginSettings } from "../components/platform-plugin-settings.js";
 import { TechnicalInformation } from "../components/technical-information.js";
 import { BrowserSettings } from "../components/browser-settings.js";
@@ -134,7 +140,7 @@ export function SettingsPage({
           error={runtimeError}
           onRunningChange={onRuntimeRunningChange}
         />
-        <AutomationDiagnosticSettings context={context} />
+        <SystemSettingsAndInformation context={context} />
       </section>
 
       <section
@@ -145,40 +151,50 @@ export function SettingsPage({
         hidden={activeTab !== "appearance"}
         tabIndex={0}
       >
-        <section class="settings-surface" aria-labelledby="appearance-title">
-          <header class="settings-section-header">
-            <div>
-              <h2 id="appearance-title">主题</h2>
-              <p>选择 Nedia Matrix 在这台设备上的显示方式。</p>
-            </div>
-          </header>
-          <div class="theme-options" role="radiogroup" aria-label="应用主题">
-            <ThemeOption
-              preference="system"
-              label="跟随系统"
-              detail={`当前使用${resolvedTheme === "dark" ? "深色" : "浅色"}外观`}
-              icon="system"
-              selected={themePreference === "system"}
-              onSelect={onThemePreferenceChange}
-            />
-            <ThemeOption
-              preference="light"
-              label="浅色"
-              detail="始终使用浅色外观"
-              icon="light"
-              selected={themePreference === "light"}
-              onSelect={onThemePreferenceChange}
-            />
-            <ThemeOption
-              preference="dark"
-              label="深色"
-              detail="始终使用深色外观"
-              icon="dark"
-              selected={themePreference === "dark"}
-              onSelect={onThemePreferenceChange}
-            />
-          </div>
-        </section>
+        <SettingsSection aria-labelledby="appearance-title">
+          <SettingsHeader
+            title="主题"
+            titleId="appearance-title"
+            summary={
+              <>
+                {themePreference === "system"
+                  ? `跟随系统 · 当前为${resolvedTheme === "dark" ? "深色" : "浅色"}`
+                  : themePreference === "dark"
+                    ? "深色"
+                    : "浅色"}
+              </>
+            }
+            actions={
+              <div
+                class="theme-options"
+                role="radiogroup"
+                aria-label="应用主题"
+              >
+                <ThemeOption
+                  preference="system"
+                  label="跟随系统"
+                  icon="system"
+                  selected={themePreference === "system"}
+                  onSelect={onThemePreferenceChange}
+                />
+                <ThemeOption
+                  preference="light"
+                  label="浅色"
+                  icon="light"
+                  selected={themePreference === "light"}
+                  onSelect={onThemePreferenceChange}
+                />
+                <ThemeOption
+                  preference="dark"
+                  label="深色"
+                  icon="dark"
+                  selected={themePreference === "dark"}
+                  onSelect={onThemePreferenceChange}
+                />
+              </div>
+            }
+          />
+        </SettingsSection>
       </section>
 
       <section
@@ -196,48 +212,13 @@ export function SettingsPage({
   );
 }
 
-function AutomationDiagnosticSettings({ context }: { context: AppContext }) {
-  const [opening, setOpening] = useState(false);
-
+function SystemSettingsAndInformation({ context }: { context: AppContext }) {
   return (
-    <section class="settings-surface" aria-labelledby="diagnostics-title">
-      <header class="settings-section-header">
-        <div>
-          <h2 id="diagnostics-title">本地诊断</h2>
-          <p>记录应用启动、账号、发布、同步及关键基础设施的诊断过程。</p>
-        </div>
-      </header>
-      <div class="runtime-settings-row">
-        <div class="runtime-settings-status">
-          <span>
-            <strong>本地诊断日志</strong>
-            <small>JSONL · 保留 14 天 · 日志与截图最多 100 MiB</small>
-          </span>
-        </div>
-        <button
-          class="secondary-button"
-          type="button"
-          disabled={opening}
-          onClick={async () => {
-            setOpening(true);
-            try {
-              await window.matrix.openDiagnosticDirectory();
-              context.setStatus("已打开本地诊断目录");
-            } catch (error) {
-              context.setStatus(
-                `无法打开日志目录：${error instanceof Error ? error.message : String(error)}`,
-                "error",
-              );
-            } finally {
-              setOpening(false);
-            }
-          }}
-        >
-          {opening ? "正在打开…" : "打开日志目录"}
-        </button>
-      </div>
+    <SettingsSection aria-labelledby="system-settings-title">
+      <SettingsHeader title="系统设置与信息" titleId="system-settings-title" />
+      <TaskSettings />
       <TechnicalInformation context={context} />
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -266,53 +247,50 @@ function RuntimeSettings({
     runtime.host && runtime.port ? `${runtime.host}:${runtime.port}` : "—";
 
   return (
-    <section class="settings-surface" aria-labelledby="runtime-title">
-      <header class="settings-section-header">
-        <div>
-          <h2 id="runtime-title">本地服务</h2>
-          <p>允许 Web 端连接桌面应用并使用本机账号与发布能力。</p>
-        </div>
-      </header>
-      <div class="runtime-settings-row">
-        <div class="runtime-settings-status">
-          <span
-            class={`runtime-dot runtime-${runtime.status}`}
-            aria-hidden="true"
-          />
-          <span>
-            <strong>{statusLabel}</strong>
-            <small>{endpoint}</small>
-          </span>
-        </div>
-        <button
-          class={running ? "secondary-button runtime-stop-button" : undefined}
-          type="button"
-          disabled={loading || actionPending}
-          onClick={() => void onRunningChange(!running)}
-        >
-          {actionPending ? "处理中…" : running ? "关闭服务" : "启动服务"}
-        </button>
-      </div>
+    <SettingsSection aria-labelledby="runtime-title">
+      <SettingsHeader
+        title="本地服务"
+        titleId="runtime-title"
+        summary={
+          <>
+            <span
+              class={`runtime-dot runtime-${runtime.status}`}
+              aria-hidden="true"
+            />
+            <span>{statusLabel}</span>
+            {endpoint !== "—" && <span>{endpoint}</span>}
+          </>
+        }
+        actions={
+          <button
+            class={running ? "secondary-button runtime-stop-button" : undefined}
+            type="button"
+            disabled={loading || actionPending}
+            onClick={() => void onRunningChange(!running)}
+          >
+            {actionPending ? "处理中…" : running ? "关闭服务" : "启动服务"}
+          </button>
+        }
+      />
+      <RuntimeAccessSettings />
       {error && (
         <p class="runtime-settings-error" role="alert">
           操作失败：{error}
         </p>
       )}
-    </section>
+    </SettingsSection>
   );
 }
 
 function ThemeOption({
   preference,
   label,
-  detail,
   icon,
   selected,
   onSelect,
 }: {
   preference: ThemePreference;
   label: string;
-  detail: string;
   icon: "system" | "light" | "dark";
   selected: boolean;
   onSelect(preference: ThemePreference): void;
@@ -329,7 +307,6 @@ function ThemeOption({
         <Icon name={icon} size={17} />
         <span>
           <strong>{label}</strong>
-          <small>{detail}</small>
         </span>
         <span class="theme-check" aria-hidden="true">
           {selected && <Icon name="check" size={14} />}

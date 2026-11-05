@@ -1,5 +1,6 @@
 .DS_Store
 .idea/
+.openidea/
 node_modules/
 .turbo/
 dist/
@@ -10,8 +11,15 @@ coverage/
 .env
 !.env.example
 .local/
-output/playwright/
+output/
 apps/desktop/resources/update-helper/
 apps/desktop/resources/plugins/
 apps/desktop/.plugins-development/
 apps/desktop/.plugins-build/
+apps/tauri/runtime/
+apps/tauri/src-tauri/target/
+apps/tauri/src-tauri/gen/
+
+apps/desktop/resources/native/
+
+apps/tauri/dist-installers/

@@ -14,7 +14,7 @@ export function registerRuntimeStatusIpcHandler(
     ipcChannels.setLocalRuntimeRunning,
     async (_event, request: SetLocalRuntimeRunningRequest) => {
       if (typeof request?.running !== "boolean") {
-        throw new TypeError("Local runtime running state must be a boolean");
+        throw new TypeError("本地服务运行状态必须为布尔值");
       }
       return application.runtime.setRunning(request);
     },

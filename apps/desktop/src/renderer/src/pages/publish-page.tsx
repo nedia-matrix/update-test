@@ -316,7 +316,11 @@ export function PublishPage({
         tags: requestedTags,
         submissionMode,
       });
-      if (result.status === "cancelled") {
+      if (result.status === "queued") {
+        context.setStatus("发布任务已受理，可在任务管理页面查看进度");
+        setMediaSelection(undefined);
+        globalThis.location.hash = `/tasks?taskId=${encodeURIComponent(result.taskId)}`;
+      } else if (result.status === "cancelled") {
         context.setStatus(result.message);
       } else if (result.status === "ready_for_review") {
         context.setRecreatedDraft(null);
@@ -396,7 +400,7 @@ export function PublishPage({
           <Icon name="accounts" size={24} />
         </span>
         <h2>先连接一个平台账号</h2>
-        <p>发布内容前，需要一个已登录的平台账号和独立 Session。</p>
+        <p>发布内容前，需要一个已登录的平台账号和独立浏览器环境。</p>
         <a class="button-link" href="#/accounts">
           前往账号管理
         </a>
@@ -426,7 +430,10 @@ export function PublishPage({
       {active &&
         headerActionsTarget &&
         createPortal(
-          <label class="publish-account-field" for="publish-account">
+          <label
+            class="control-field publish-account-field"
+            for="publish-account"
+          >
             <span class="publish-sr-only">发布账号</span>
             <PlatformIcon
               iconUrl={platform?.iconUrl}
@@ -887,7 +894,7 @@ function renderPublishResult(
     );
   } else if (update.status === "published") {
     const identity = update.platformContentId
-      ? `，作品 ID：${update.platformContentId}`
+      ? `，作品标识：${update.platformContentId}`
       : "";
     context.setStatus(`发布成功${identity}`);
   } else if (update.status === "failed") {

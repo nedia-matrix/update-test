@@ -1,3 +1,8 @@
+import { platformSyncResponseError } from "@nedia-matrix/platform-sdk";
+import {
+  platformSyncFailure,
+  type PlatformSyncFailure,
+} from "@nedia-matrix/platform-sdk";
 import { isPlatformDataOperationError } from "@nedia-matrix/platform-sdk";
 import type {
   PlatformContentCapability,
@@ -24,6 +29,7 @@ function partialResult(
   pagesRead: number,
   remoteTotal: number | undefined,
   diagnostic: string,
+  failure?: PlatformSyncFailure,
 ): PlatformContentReadResult {
   return {
     items: [...items.values()],
@@ -31,6 +37,7 @@ function partialResult(
     pagesRead,
     ...(remoteTotal === undefined ? {} : { remoteTotal }),
     diagnostics: [diagnostic],
+    ...(failure ? { failure } : {}),
   };
 }
 
@@ -74,17 +81,24 @@ export const douyinRequestedContentCapability: PlatformContentCapability = {
           pagesRead,
           remoteTotal,
           `抖音作品第 ${pagesRead + 1} 页同步停止（${error.userMessage}）`,
+          platformSyncFailure(error),
         );
       }
       if (!response.ok || response.body === null) {
         if (pagesRead === 0) {
-          throw new Error(`抖音作品列表请求失败（HTTP ${response.status}）`);
+          throw platformSyncResponseError(
+            response,
+            `抖音作品列表请求失败（HTTP ${response.status}）`,
+          );
         }
         return partialResult(
           items,
           pagesRead,
           remoteTotal,
           `抖音作品第 ${pagesRead + 1} 页请求失败（HTTP ${response.status}）`,
+          platformSyncFailure(
+            platformSyncResponseError(response, "抖音作品列表请求失败"),
+          ),
         );
       }
 

@@ -1,3 +1,9 @@
+import {
+  resolvePluginEnvironment,
+  type PluginEnvironment,
+} from "./plugin-environment.js";
+import { configuredRuntimePaths } from "../runtime/runtime-paths.js";
+import { businessDataDirectory } from "../runtime/desktop-data-paths.js";
 import { recordApplicationUpdateStartup } from "../updates/electron-application-update.js";
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
@@ -14,24 +20,34 @@ export function desktopPlugins(): PlatformPluginManager {
   if (!manager) throw new Error("平台插件尚未初始化");
   return manager;
 }
-export async function initializeDesktopPlugins(): Promise<void> {
-  const bundled = app.isPackaged
-    ? join(process.resourcesPath, "plugins")
-    : join(app.getAppPath(), ".plugins-development");
-  // Development trust is loaded only in unpackaged mode, never into a distributed binary.
-  const keys = app.isPackaged
-    ? typeof __NEDIA_UPDATE_PUBLIC_KEYS__ !== "undefined"
-      ? __NEDIA_UPDATE_PUBLIC_KEYS__
-      : {}
-    : (JSON.parse(
-        readFileSync(join(bundled, "development-public-keys.json"), "utf8"),
-      ) as Record<string, string>);
+export async function initializeDesktopPlugins(
+  environment?: PluginEnvironment,
+  assertAcceptingCommands: () => void = () => {},
+): Promise<void> {
+  const selected = resolvePluginEnvironment(
+    environment ??
+      (app.isPackaged || configuredRuntimePaths()?.environment === "development"
+        ? {
+            trust: "release",
+            bundledDirectory: app.isPackaged
+              ? join(process.resourcesPath, "plugins")
+              : join(app.getAppPath(), "resources/plugins"),
+            publicKeys:
+              typeof __NEDIA_UPDATE_PUBLIC_KEYS__ !== "undefined"
+                ? __NEDIA_UPDATE_PUBLIC_KEYS__
+                : {},
+          }
+        : {
+            trust: "development",
+            bundledDirectory: join(app.getAppPath(), ".plugins-development"),
+          }),
+  );
+  const bundled = selected.bundledDirectory;
+  // Persist the migration boundary before plugin construction or preinstall writes.
+  if (selected.trust === "release") await recordApplicationUpdateStartup(false);
   manager = new PlatformPluginManager(
-    join(
-      app.getPath("userData"),
-      app.isPackaged ? "plugins" : "plugins-development",
-    ),
-    keys,
+    join(businessDataDirectory(), selected.installationDirectoryName),
+    selected.publicKeys,
   );
   try {
     manager.preinstall(bundled);
@@ -39,7 +55,7 @@ export async function initializeDesktopPlugins(): Promise<void> {
     console.error("平台插件预装失败", error);
     manager.reportPreinstallFailure();
   }
-  if (!app.isPackaged) {
+  if (selected.refreshBundledOnStartup) {
     // Adopt rebuilt development packages before importing execution entries.
     manager.stageBundledUpdate(bundled);
   } else {
@@ -78,20 +94,25 @@ export async function initializeDesktopPlugins(): Promise<void> {
   ipcMain.handle(ipcChannels.listBundledPlugins, () =>
     desktopPlugins().listBundled(bundled),
   );
-  ipcMain.handle(ipcChannels.installBundledPlugin, (_event, id: string) =>
-    desktopPlugins().stageBundledInstall(bundled, id),
-  );
+  ipcMain.handle(ipcChannels.installBundledPlugin, (_event, id: string) => {
+    assertAcceptingCommands();
+    return desktopPlugins().stageBundledInstall(bundled, id);
+  });
   ipcMain.handle(
     ipcChannels.changePlugin,
-    (_event, change: PlatformPluginChange) =>
-      desktopPlugins().stageChange(change),
+    (_event, change: PlatformPluginChange) => {
+      assertAcceptingCommands();
+      return desktopPlugins().stageChange(change);
+    },
   );
   ipcMain.handle(ipcChannels.installPlugin, async () => {
+    assertAcceptingCommands();
     const selection = await dialog.showOpenDialog({
       title: "安装平台插件",
       properties: ["openFile"],
       filters: [{ name: "平台插件包", extensions: ["nmp"] }],
     });
+    assertAcceptingCommands();
     if (selection.canceled || !selection.filePaths[0])
       return desktopPlugins().list();
     const path = selection.filePaths[0],

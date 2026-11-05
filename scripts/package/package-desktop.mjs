@@ -77,7 +77,7 @@ async function provenance(distribution, names) {
     );
     await writeFile(
       `${file}.provenance.json`,
-      `${JSON.stringify({ appId: "com.nediamatrix.desktop", version, platform: target.platform, arch: target.arch, distribution, sha256: await sha256File(file), trustedKeyFingerprints }, null, 2)}\n`,
+      `${JSON.stringify({ appId: "com.nediamatrix.desktop", shell: "electron", version, platform: target.platform, arch: target.arch, distribution, sha256: await sha256File(file), trustedKeyFingerprints }, null, 2)}\n`,
     );
   }
 }
@@ -97,6 +97,15 @@ if (helperBuild.error) throw helperBuild.error;
 if (helperBuild.status !== 0) throw new Error("更新辅助程序构建失败");
 
 if (mode === "mac") {
+  for (const arch of ["arm64", "x64"]) {
+    const native = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, "build-runtime-lock.mjs"), arch],
+      { stdio: "inherit" },
+    );
+    if (native.error) throw native.error;
+    if (native.status !== 0) throw new Error("运行锁原生模块构建失败");
+  }
   run(["run", "build"], "app-zip");
   run(["exec", "electron-builder", "--mac", "--publish", "never"], "app-zip");
   await provenance(

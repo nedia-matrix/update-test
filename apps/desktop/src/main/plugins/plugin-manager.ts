@@ -1,3 +1,4 @@
+import { pluginProtocolVersions } from "./plugin-protocol.mjs";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -45,7 +46,7 @@ interface PackageRecord {
   error?: string;
 }
 interface PluginState {
-  schema: 1;
+  schema: typeof pluginProtocolVersions.state;
   initialized: boolean;
   initializationError?: string;
   records: PackageRecord[];
@@ -86,7 +87,12 @@ export class PlatformPluginManager {
         for (const record of this.state.records)
           record.error = "插件安装记录损坏，已恢复上次记录，请核对安装状态";
       }
-    } else this.state = { schema: 1, initialized: false, records: [] };
+    } else
+      this.state = {
+        schema: pluginProtocolVersions.state,
+        initialized: false,
+        records: [],
+      };
   }
   private statePath() {
     return join(this.root, "installed.json");
@@ -102,7 +108,7 @@ export class PlatformPluginManager {
     const ids = new Set<string>(),
       platforms = new Set<string>();
     if (
-      state.schema !== 1 ||
+      state.schema !== pluginProtocolVersions.state ||
       typeof state.initialized !== "boolean" ||
       (state.initializationError !== undefined &&
         typeof state.initializationError !== "string") ||
@@ -275,7 +281,11 @@ export class PlatformPluginManager {
           enabled: true,
         });
       }
-      this.save({ schema: 1, initialized: true, records });
+      this.save({
+        schema: pluginProtocolVersions.state,
+        initialized: true,
+        records,
+      });
     } catch (error) {
       for (const slot of created)
         rmSync(this.slotPath(slot), { force: true, recursive: true });
@@ -285,7 +295,7 @@ export class PlatformPluginManager {
   reportPreinstallFailure() {
     if (this.state.initialized) return;
     this.save({
-      schema: 1,
+      schema: pluginProtocolVersions.state,
       initialized: true,
       initializationError: "预装插件校验或安装失败，请手动安装可信插件包",
       records: [],

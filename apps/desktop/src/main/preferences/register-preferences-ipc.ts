@@ -10,17 +10,23 @@ export function registerPreferencesIpc(
   store: PreferencesStore,
   sourceChanges?: { assertIdle(): void; changed(): void },
   assertFingerprintReady?: () => Promise<void>,
+  assertAcceptingCommands: () => void = () => {},
 ): void {
   ipcMain.handle(
     ipcChannels.getPreferences,
-    (_event, request?: GetPreferencesRequest) => store.get(request),
+    (_event, request?: GetPreferencesRequest) => {
+      assertAcceptingCommands();
+      return store.get(request);
+    },
   );
   ipcMain.handle(
     ipcChannels.updatePreferences,
     (_event, request: UpdatePreferencesRequest) => {
+      assertAcceptingCommands();
       const changesSource = request?.updates?.sourceUrl !== undefined;
       if (changesSource) sourceChanges?.assertIdle();
       const save = () => {
+        assertAcceptingCommands();
         const result = store.update(request);
         if (changesSource) sourceChanges?.changed();
         return result;
