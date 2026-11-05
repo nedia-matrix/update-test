@@ -98,7 +98,7 @@ export async function syncPublicGiteeTag({
     const stderr = String(error?.stderr ?? "");
     let reason = "Git 推送失败，请检查写入权限、网络及已有 tag";
     if (/shallow update not allowed|shallow object/i.test(stderr))
-      reason = "远端拒绝浅克隆历史；Gitee 作业须使用 checkout fetch-depth: 0";
+      reason = "远端拒绝浅克隆历史；请先 git fetch --unshallow，使用完整公开历史";
     else if (
       /authentication failed|could not read Username|HTTP Basic: Access denied|returned error: (401|403)|incorrect username or password/i.test(
         stderr,
@@ -120,7 +120,7 @@ export async function syncPublicGiteeTag({
       ) ||
       error?.code === "ETIMEDOUT"
     )
-      reason = "连接 Gitee 失败或超时，请检查 runner 网络";
+      reason = "连接 Gitee 失败或超时，请检查本机网络";
     throw new Error(`Gitee tag 同步失败：${reason}；不会强制覆盖`);
   }
 }
