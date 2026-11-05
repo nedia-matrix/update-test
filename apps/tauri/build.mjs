@@ -13,7 +13,7 @@ import {
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
-import { readReleaseConfiguration } from "../../scripts/publish/set-release-version.mjs";
+import { readReleaseConfiguration } from "../../scripts/publish/up-release-version.mjs";
 const here = import.meta.dirname;
 const root = resolve(here, "../..");
 const desktop = join(root, "apps/desktop");
