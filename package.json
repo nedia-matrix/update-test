@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "version:sync": "node scripts/publish/release-config.mjs",
+    "version:set": "node scripts/publish/set-release-version.mjs",
     "build": "turbo run build",
     "browser:install": "pnpm --filter @nedia-matrix/automation-playwright exec playwright-core install chromium",
     "dev": "turbo run build --filter='./packages/**' --filter='./plugins/**' && pnpm --filter @nedia-matrix/desktop dev",

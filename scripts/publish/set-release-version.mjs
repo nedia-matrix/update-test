@@ -1,23 +1,28 @@
-import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+
+const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 export function readReleaseConfiguration(root, tag) {
   const version = JSON.parse(
     readFileSync(resolve(root, "apps/desktop/package.json")),
   ).version;
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version))
+  if (!stableVersion.test(version))
     throw new Error("Stable application version required");
   if (tag !== undefined && tag !== `v${version}`)
     throw new Error("Release tag does not match application version");
   return { version };
 }
 
-export function syncReleaseVersion(root, tag) {
-  const configuration = readReleaseConfiguration(root, tag);
-  const { version } = configuration;
+export function setReleaseVersion(root, version) {
+  if (typeof version !== "string" || !stableVersion.test(version))
+    throw new Error(
+      "Stable application version required (usage: pnpm version:set X.Y.Z)",
+    );
   const changes = [];
   for (const name of [
+    "apps/desktop/package.json",
     "apps/tauri/package.json",
     "apps/tauri/src-tauri/tauri.conf.json",
   ]) {
@@ -32,7 +37,10 @@ export function syncReleaseVersion(root, tag) {
       "Cargo.toml",
       /(^\[package\]\r?\n(?:(?!\[)[^\n]*\n)*?version = ")[^"]+("\r?$)/m,
     ],
-    ["Cargo.lock", /(^name = "nedia-matrix-tauri"\r?\nversion = ")[^"]+("\r?$)/m],
+    [
+      "Cargo.lock",
+      /(^name = "nedia-matrix-tauri"\r?\nversion = ")[^"]+("\r?$)/m,
+    ],
   ]) {
     const file = resolve(root, "apps/tauri/src-tauri", name);
     const original = readFileSync(file, "utf8");
@@ -49,20 +57,15 @@ export function syncReleaseVersion(root, tag) {
   }
   for (const [file, original, updated] of changes)
     if (original !== updated) writeFileSync(file, updated);
-  return configuration;
+  return { version };
 }
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
-  const configuration = syncReleaseVersion(
+  const configuration = setReleaseVersion(
     resolve(import.meta.dirname, "../.."),
-    process.argv[2] ?? process.env.GITHUB_REF_NAME,
+    process.argv[2],
   );
-  if (process.env.GITHUB_OUTPUT)
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `version=${configuration.version}\n`,
-    );
   console.log(JSON.stringify(configuration));
 }

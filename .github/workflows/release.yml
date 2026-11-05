@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: 24.18.0
       - id: release
-        run: node scripts/publish/release-config.mjs "$GITHUB_REF_NAME"
+        run: node --input-type=module -e 'import { readReleaseConfiguration } from "./scripts/publish/set-release-version.mjs"; readReleaseConfiguration(process.cwd(), process.env.GITHUB_REF_NAME);'
       - name: Require Gitee publication configuration
         run: |
           node --input-type=module -e 'import { giteeRepository } from "./scripts/publish/gitee-release.mjs"; giteeRepository(process.env.NEDIA_GITEE_REPOSITORY); if (!process.env.NEDIA_GITEE_TOKEN?.trim()) throw new Error("Releases require NEDIA_GITEE_TOKEN");'
@@ -155,7 +155,7 @@ jobs:
       - name: Verify release version
         shell: bash
         run: |
-          node scripts/publish/release-config.mjs "$GITHUB_REF_NAME"
+          node --input-type=module -e 'import { readReleaseConfiguration } from "./scripts/publish/set-release-version.mjs"; readReleaseConfiguration(process.cwd(), process.env.GITHUB_REF_NAME);'
       - run: pnpm install --frozen-lockfile
       - name: Build platform dependencies
         run: pnpm desktop:build-dependencies

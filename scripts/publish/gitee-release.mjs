@@ -165,37 +165,26 @@ export function giteeClient({ repository, token, fetcher = fetch }) {
   ) => {
     let response;
     const upload = body instanceof FormData;
-    const headers = { Accept: "application/json" };
+    const headers = {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    };
     let progressTimer;
     try {
       if (upload) {
-        body.set("access_token", token);
         const fileName = body.get("file").name;
-        // Use the platform multipart encoder, including its exact Content-Length.
-        const multipart = await new Response(body).blob();
-        headers["Content-Type"] = multipart.type;
-        headers["Content-Length"] = String(multipart.size);
-        let sent = 0;
         const started = Date.now();
-        const report = () =>
-          console.log(
-            `Gitee 上传进度：${fileName}，请求体已交给 HTTP 客户端 ${sent}/${multipart.size} 字节（${Math.floor((sent / multipart.size) * 100)}%），耗时 ${Math.floor((Date.now() - started) / 1000)} 秒${sent === multipart.size ? "，等待服务器响应" : ""}`,
-          );
-        progressTimer = setInterval(report, 15_000);
-        body = (async function* () {
-          for await (const chunk of multipart.stream()) {
-            sent += chunk.length;
-            yield chunk;
-          }
-          report();
-        })();
-      } else {
-        headers.Authorization = `Bearer ${token}`;
+        progressTimer = setInterval(
+          () =>
+            console.log(
+              `Gitee 上传请求未完成：${fileName}，耗时 ${Math.floor((Date.now() - started) / 1000)} 秒（尚未收到响应头，无法确认服务端接收进度）`,
+            ),
+          15_000,
+        );
       }
       response = await fetcher(`${apiOrigin}${base}${route}`, {
         method,
         body,
-        ...(upload ? { duplex: "half" } : {}),
         redirect: "manual",
         signal: AbortSignal.timeout(upload ? 60 * 60_000 : 120_000),
         headers,
@@ -442,16 +431,36 @@ export async function publishGiteeRelease({
         console.log(
           `Gitee 上传附件：${file.name}（${file.size} 字节，超时上限 60 分钟）`,
         );
+        const started = Date.now();
         attachment = await client.request(`/releases/${id}/attach_files`, {
           method: "POST",
           body: form,
         });
+        console.log(
+          `Gitee 上传成功：${file.name}，耗时 ${Math.floor((Date.now() - started) / 1000)} 秒`,
+        );
         attachments.push(attachment);
       }
       if (attachment?.name !== file.name || attachment?.size !== file.size)
         throw new Error(`Gitee 附件身份或大小不匹配：${file.name}`);
       const url = attachmentUrl(repository, id, attachment.id);
-      await verifyPublicFile(url, file, fetcher);
+      const started = Date.now();
+      console.log(`Gitee 开始匿名回读校验：${file.name}`);
+      const timer = setInterval(
+        () =>
+          console.log(
+            `Gitee 匿名回读校验中：${file.name}，耗时 ${Math.floor((Date.now() - started) / 1000)} 秒`,
+          ),
+        15_000,
+      );
+      try {
+        await verifyPublicFile(url, file, fetcher);
+        console.log(
+          `Gitee 匿名回读校验通过：${file.name}，耗时 ${Math.floor((Date.now() - started) / 1000)} 秒`,
+        );
+      } finally {
+        clearInterval(timer);
+      }
       return url;
     };
     const urls = {};

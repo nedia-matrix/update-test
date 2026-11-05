@@ -13,7 +13,7 @@ import { platformPluginBuildEnvironment } from "../../scripts/package/platform-p
 import { buildTauriPortable } from "../../scripts/package/build-tauri-portable.mjs";
 import { buildTauriNsis } from "../../scripts/package/build-tauri-nsis.mjs";
 import { configuredPublicKeys } from "../../scripts/publish/update-keys.mjs";
-import { syncReleaseVersion } from "../../scripts/publish/release-config.mjs";
+import { readReleaseConfiguration } from "../../scripts/publish/set-release-version.mjs";
 import {
   publicKeyFingerprint,
   sha256File,
@@ -26,7 +26,7 @@ if (!["dev", "package"].includes(mode))
   throw new Error("Expected dev or package");
 if (mode === "package" && !["darwin", "win32"].includes(process.platform))
   throw new Error("Release packaging currently supports macOS and Windows");
-const { version } = syncReleaseVersion(root);
+const { version } = readReleaseConfiguration(root);
 const env = {
   ...process.env,
   PATH: `${join(homedir(), ".cargo/bin")}${delimiter}${process.env.PATH}`,

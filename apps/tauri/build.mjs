@@ -13,13 +13,13 @@ import {
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
-import { syncReleaseVersion } from "../../scripts/publish/release-config.mjs";
+import { readReleaseConfiguration } from "../../scripts/publish/set-release-version.mjs";
 const here = import.meta.dirname;
 const root = resolve(here, "../..");
 const desktop = join(root, "apps/desktop");
 const require = createRequire(join(desktop, "package.json"));
 const { build } = await import(pathToFileURL(require.resolve("vite")).href);
-const { version: appVersion } = syncReleaseVersion(root);
+const { version: appVersion } = readReleaseConfiguration(root);
 const releaseDefines = {
   __NEDIA_TAURI_BUILD__: "true",
   __NEDIA_APP_VERSION__: JSON.stringify(appVersion),
