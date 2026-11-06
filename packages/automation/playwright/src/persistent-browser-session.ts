@@ -69,7 +69,7 @@ export class BrowserLaunchError extends Error {
     fingerprint = false,
   ) {
     super(
-      `Unable to start a supported browser. ${fingerprint ? "Reinstall the configured fingerprint browser with pnpm browser:install:fingerprint; system fallback is disabled." : "Install Google Chrome or Microsoft Edge and try again."} ${failures.map(({ channel, message }) => `${channel}: ${message}`).join("\n")}`,
+      `Unable to start a supported browser. ${fingerprint ? "Reinstall the configured fingerprint browser in Settings > Browser; system fallback is disabled." : "Install Google Chrome or Microsoft Edge and try again."} ${failures.map(({ channel, message }) => `${channel}: ${message}`).join("\n")}`,
     );
     this.name = "BrowserLaunchError";
     this.failures = failures;

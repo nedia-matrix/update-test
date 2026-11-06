@@ -1,19 +1,15 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.7.10",
+  "version": "0.7.11",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "build": "node ../../scripts/package/build-runtime-lock.mjs && electron-vite build",
-    "dev": "node ../../scripts/package/build-runtime-lock.mjs && pnpm plugins:dev && electron-vite dev",
     "package:mac": "node ../../scripts/package/package-desktop.mjs mac",
     "package:win": "node ../../scripts/package/package-desktop.mjs win",
     "package:win:portable": "node ../../scripts/package/package-desktop.mjs win:portable",
-    "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
-    "plugins:build": "node ../../scripts/package/build-platform-plugins.mjs",
-    "plugins:dev": "node ../../scripts/package/build-platform-plugins.mjs --development"
+    "plugins:build": "node ../../scripts/package/build-platform-plugins.mjs"
   },
   "dependencies": {
     "@nedia-matrix/account-management": "workspace:*",

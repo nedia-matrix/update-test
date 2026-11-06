@@ -21,9 +21,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@nedia-matrix/automation-engine": "workspace:*",

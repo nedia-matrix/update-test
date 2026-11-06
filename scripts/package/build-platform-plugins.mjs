@@ -49,7 +49,15 @@ const work = legacyXiaohongshu
   : join(desktop, ".plugins-build");
 const platforms = legacyXiaohongshu
   ? ["xiaohongshu"]
-  : ["douyin", "xiaohongshu", "kuaishou", "mock"];
+  : [
+      "douyin",
+      "xiaohongshu",
+      "kuaishou",
+      // The optional mock source only exists in the development repository.
+      ...(existsSync(join(root, "plugins/platform-mock/package.json"))
+        ? ["mock"]
+        : []),
+    ];
 // Each plugin owns its release metadata. Application versions never supply a fallback.
 const plugins = platforms.map((platform) => {
   const packageFile = join(

@@ -80,7 +80,9 @@ export function upReleaseVersion(root, args = []) {
   const indices = { major: 0, minor: 1, patch: 2, 1: 0, 2: 1, 3: 2 };
   const part = args[0] ?? "patch";
   if (args.length > 1 || !Object.hasOwn(indices, part))
-    throw new Error("Usage: pnpm version:up [major|minor|patch|1|2|3]");
+    throw new Error(
+      "Usage: node scripts/publish/up-release-version.mjs [major|minor|patch|1|2|3]",
+    );
   const { version: current } = readReleaseConfiguration(root);
   const segments = current.split(".").map(BigInt);
   const index = indices[part];
