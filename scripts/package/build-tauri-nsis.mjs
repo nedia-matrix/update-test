@@ -12,11 +12,12 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 
-const desktop = resolve(import.meta.dirname, "../../apps/desktop");
+const project = resolve(import.meta.dirname, "../../apps/desktop-tauri");
+const root = resolve(import.meta.dirname, "../..");
 const preflight = join(import.meta.dirname, "windows-installer.ps1");
 const include = join(import.meta.dirname, "windows-installer.nsh");
 const bootstrapperUrl = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
-const builder = createRequire(join(desktop, "package.json")).resolve(
+const builder = createRequire(join(root, "package.json")).resolve(
   "electron-builder/cli.js",
 );
 
@@ -35,7 +36,10 @@ export async function buildTauriNsis(
   if (process.platform !== "win32")
     throw new Error("NSIS packaging requires Windows");
   const metadata = JSON.parse(
-    readFileSync(join(desktop, "package.json"), "utf8"),
+    readFileSync(join(project, "package.json"), "utf8"),
+  );
+  const packaging = JSON.parse(
+    readFileSync(join(root, "resources/desktop/packaging.json"), "utf8"),
   );
   if (metadata.version !== version)
     throw new Error("Desktop shell versions must match");
@@ -84,9 +88,9 @@ export async function buildTauriNsis(
     writeFileSync(
       config,
       JSON.stringify({
-        ...metadata.build,
-        directories: { ...metadata.build.directories, output: buildOutput },
-        nsis: { ...metadata.build.nsis, include: hooks },
+        ...packaging,
+        directories: { ...packaging.directories, output: buildOutput },
+        nsis: { ...packaging.nsis, include: hooks },
       }),
     );
     // NSIS adds its scope-elevation helper here even for prepackaged apps.
@@ -105,7 +109,7 @@ export async function buildTauriNsis(
         "--publish",
         "never",
       ],
-      { cwd: desktop, env: environment, stdio: "inherit" },
+      { cwd: project, env: environment, stdio: "inherit" },
     );
     const name = `NediaMatrix-${version}-win-setup-x64.exe`;
     const packaged = join(buildOutput, name);

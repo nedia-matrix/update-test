@@ -5,3 +5,5 @@ export * from "./redaction.js";
 export * from "./retention.js";
 export * from "./trace.js";
 export * from "./zip-archive.js";
+export * from "./readonly-reader.js";
+export * from "./normalize-record.js";

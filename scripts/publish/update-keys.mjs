@@ -2,7 +2,7 @@ import { createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 export const publicKeysFile = new URL(
-  "../../apps/desktop/resources/update-public-keys.json",
+  "../../resources/desktop/update-public-keys.json",
   import.meta.url,
 );
 

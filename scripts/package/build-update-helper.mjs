@@ -2,10 +2,10 @@ import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 
-const source = resolve(import.meta.dirname, "../../apps/desktop/installer");
+const source = resolve(import.meta.dirname, "../../tools/update-helper");
 const output =
   process.env.NEDIA_UPDATE_HELPER_OUTPUT ??
-  resolve(source, "../resources/update-helper");
+  resolve(import.meta.dirname, "../../resources/desktop/update-helper");
 const flags = "-s -w";
 await mkdir(output, { recursive: true });
 const run = (command, args, env = {}) => {

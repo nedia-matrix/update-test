@@ -14,7 +14,10 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { NtExecutable, NtExecutableResource, Resource, Data } from "resedit";
 
-const source = resolve(import.meta.dirname, "../../apps/tauri/portable");
+const source = resolve(
+  import.meta.dirname,
+  "../../apps/desktop-tauri/portable",
+);
 // Used by Tauri Windows packaging and the standalone compatibility verifier.
 export function buildTauriPortable(payloadDirectory, output, version) {
   if (
@@ -74,7 +77,9 @@ export function buildTauriPortable(payloadDirectory, output, version) {
     );
     info.outputToResourceEntries(resources.entries);
     const icon = Data.IconFile.from(
-      readFileSync(resolve(source, "../../desktop/resources/icon.ico")),
+      readFileSync(
+        resolve(import.meta.dirname, "../../resources/desktop/icon.ico"),
+      ),
     );
     Resource.IconGroupEntry.replaceIconsForResource(
       resources.entries,

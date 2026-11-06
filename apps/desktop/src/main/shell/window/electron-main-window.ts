@@ -1,8 +1,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AccountBrowserRuntime } from "../../../bridge/account-browser-runtime.js";
-import { ipcChannels } from "../../../bridge/channels.js";
+import type { AccountBrowserRuntime } from "@nedia-matrix/desktop-contracts/account-browser-runtime";
+import { ipcChannels } from "@nedia-matrix/desktop-contracts/channels";
 import type { PublishResultUpdate } from "@nedia-matrix/publishing";
 import { BrowserWindow } from "electron";
 

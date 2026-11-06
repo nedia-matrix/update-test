@@ -1,6 +1,9 @@
-import { runtimeCompatibility } from "../runtime/runtime-support.js";
+import { configureElectronRuntimeHost } from "../runtime-host.js";
+import { runtimeCompatibility } from "@nedia-matrix/desktop-runtime/runtime/runtime-support";
 import { app } from "electron";
-import { resolveRuntimePaths } from "../runtime/runtime-paths.js";
+import { resolveRuntimePaths } from "@nedia-matrix/desktop-runtime/runtime/runtime-paths";
+
+configureElectronRuntimeHost();
 
 // Diagnostic startup deliberately does not import the business bootstrap.
 if (process.argv.includes("--runtime-paths-report")) {

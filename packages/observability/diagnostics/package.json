@@ -8,6 +8,11 @@
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./reader-contracts": {
+      "types": "./src/reader-contracts.ts",
+      "import": "./dist/reader-contracts.js",
+      "default": "./dist/reader-contracts.js"
     }
   },
   "scripts": {

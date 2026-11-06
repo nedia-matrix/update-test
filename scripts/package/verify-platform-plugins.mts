@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { configuredPublicKeys } from "../publish/update-keys.mjs";
-import { verifyPluginArchive } from "../../apps/desktop/src/main/plugins/plugin-package.ts";
+import { verifyPluginArchive } from "../../packages/desktop/runtime/src/plugins/plugin-package.ts";
 
 const directory = process.argv[2];
 if (!directory) throw new Error("缺少预装插件目录");

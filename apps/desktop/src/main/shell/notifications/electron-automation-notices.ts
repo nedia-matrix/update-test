@@ -4,7 +4,7 @@ import {
   automationNoticeMessages,
   type AutomationNotice,
   type AutomationNoticeSink,
-} from "../../application/automation-notice.js";
+} from "@nedia-matrix/desktop-runtime/application/automation-notice";
 
 function escapeHtml(value: string): string {
   return value.replace(

@@ -5,16 +5,17 @@ import { pathToFileURL } from "node:url";
 
 const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const versionFiles = [
+  "release.json",
   "apps/desktop/package.json",
-  "apps/tauri/package.json",
-  "apps/tauri/src-tauri/tauri.conf.json",
-  "apps/tauri/src-tauri/Cargo.toml",
-  "apps/tauri/src-tauri/Cargo.lock",
+  "apps/desktop-tauri/package.json",
+  "apps/desktop-tauri/src-tauri/tauri.conf.json",
+  "apps/desktop-tauri/src-tauri/Cargo.toml",
+  "apps/desktop-tauri/src-tauri/Cargo.lock",
 ];
 
 export function readReleaseConfiguration(root, tag) {
   const version = JSON.parse(
-    readFileSync(resolve(root, "apps/desktop/package.json")),
+    readFileSync(resolve(root, "release.json")),
   ).version;
   if (!stableVersion.test(version))
     throw new Error("Stable application version required");
@@ -27,7 +28,7 @@ export function setReleaseVersion(root, version) {
   if (typeof version !== "string" || !stableVersion.test(version))
     throw new Error("Stable application version required");
   const changes = [];
-  for (const name of versionFiles.slice(0, 3)) {
+  for (const name of versionFiles.slice(0, 4)) {
     const file = resolve(root, name);
     const original = readFileSync(file, "utf8");
     const value = JSON.parse(original);
@@ -44,7 +45,7 @@ export function setReleaseVersion(root, version) {
       /(^name = "nedia-matrix-tauri"\r?\nversion = ")[^"]+("\r?$)/m,
     ],
   ]) {
-    const file = resolve(root, "apps/tauri/src-tauri", name);
+    const file = resolve(root, "apps/desktop-tauri/src-tauri", name);
     const original = readFileSync(file, "utf8");
     if (!section.test(original))
       throw new Error(`Missing application version: ${name}`);

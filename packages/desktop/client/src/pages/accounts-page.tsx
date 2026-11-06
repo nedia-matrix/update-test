@@ -1,0 +1,652 @@
+import {
+  SettingsSection,
+  SettingsHeader,
+} from "../components/settings-primitives.js";
+import type {
+  PlatformAccountInfoKey,
+  PlatformAccountView,
+} from "@nedia-matrix/account-management";
+import type { PlatformContentSnapshot } from "@nedia-matrix/platform-content";
+import type { PlatformLoginEntrySummary } from "@nedia-matrix/desktop-contracts/contracts";
+import { useEffect, useState } from "preact/hooks";
+
+import type { AppContext } from "../app-context.js";
+import { Icon } from "../components/icons.js";
+import { AccountPluginSettings } from "../components/account-plugin-settings.js";
+import { AccountBrowserSettings } from "../components/account-browser-settings.js";
+import { PlatformIcon } from "../components/platform-icon.js";
+import {
+  accountStatus,
+  errorMessage,
+  formatTime,
+  platformFor,
+  isPlatformAvailable,
+} from "../shared.js";
+import { PlatformContentsPage } from "./platform-contents-page.js";
+
+import {
+  AccountBrowserStatus,
+  browserRuntimeLabel,
+  type BrowserRuntimeStatus,
+} from "../components/account-browser-status.js";
+
+export function AccountsPage({
+  context,
+  account,
+  browserStatus = "unknown",
+  onAccountsChanged,
+}: {
+  context: AppContext;
+  account?: PlatformAccountView;
+  browserStatus?: BrowserRuntimeStatus;
+  onAccountsChanged(
+    accounts: readonly PlatformAccountView[],
+    preferredAccountId?: string,
+  ): void;
+}) {
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "contents" | "settings"
+  >("overview");
+  const [busyAction, setBusyAction] = useState<
+    "open" | "refresh" | "contents" | "delete"
+  >();
+  const [browserSwitchBusy, setBrowserSwitchBusy] = useState(false);
+  const [submissionBusy, setSettingsBusy] = useState(false);
+
+  useEffect(
+    () =>
+      window.matrix.onPlatformContentSyncProgress((progress) => {
+        if (progress.accountId === account?.id && progress.running) {
+          context.setStatus(
+            `正在同步作品：已保存 ${progress.pagesRead} 页、${progress.itemsRead} 条`,
+            "busy",
+          );
+        }
+      }),
+    [account?.id, context],
+  );
+
+  if (!account) {
+    return (
+      <section class="empty-workspace account-empty-workspace">
+        <span class="empty-workspace-icon">
+          <Icon name="accounts" size={24} />
+        </span>
+        <h2>添加第一个平台账号</h2>
+        <p>账号会显示在左侧，资料、内容和相关操作都从账号出发。</p>
+      </section>
+    );
+  }
+
+  const platform = platformFor(context.platforms, account.platformId);
+  const accountName = account.nickname ?? account.displayName;
+  const accountDescription = accountInformation(account, "desc");
+
+  const runAction = async (action: "open" | "refresh" | "delete") => {
+    setBusyAction(action);
+    try {
+      if (action === "open") {
+        context.setStatus(`正在打开 ${accountName}…`, "busy");
+        await window.matrix.openPlatformAccount({ accountId: account.id });
+        context.setStatus("平台窗口已打开，账号信息将在识别后更新");
+        return;
+      }
+      if (action === "refresh") {
+        context.setStatus("正在从平台刷新账号资料…", "busy");
+        await window.matrix.tasks.enqueueSync({
+          accountId: account.id,
+          type: "account_profile_sync",
+        });
+        context.setStatus("资料同步已受理，可在任务管理页面查看进度");
+        return;
+      }
+      if (
+        !globalThis.confirm(
+          `从本应用移除“${accountName}”及其本地登录数据？此操作不会注销平台账号。`,
+        )
+      )
+        return;
+      context.setStatus("正在移除账号和本地登录数据…", "busy");
+      await window.matrix.removePlatformAccount({ accountId: account.id });
+      const refreshed = await context.refreshAccounts();
+      onAccountsChanged(refreshed);
+      context.setStatus("账号和本地登录数据已移除");
+    } catch (error) {
+      context.setStatus(errorMessage(error, "账号操作失败"), "error");
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  const synchronizeContents = async () => {
+    setBusyAction("contents");
+    context.setStatus("正在从平台同步作品和最新指标…", "busy");
+    try {
+      await window.matrix.tasks.enqueueSync({
+        accountId: account.id,
+        type: "platform_content_sync",
+      });
+      context.setStatus("作品同步已受理，可在任务管理页面查看进度");
+    } catch (error) {
+      context.setStatus(errorMessage(error, "平台作品同步失败"), "error");
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  return (
+    <div
+      class={`account-workspace${platform?.unavailableReason ? " has-plugin-notice" : ""}`}
+    >
+      {platform?.unavailableReason && (
+        <div class="account-plugin-status" role="status">
+          <span class="status-indicator" aria-hidden="true" />
+          <span class="global-status-message" tabIndex={0}>
+            {platform.unavailableReason}
+            。账号和历史已保留，请在设置中管理平台插件。
+          </span>
+        </div>
+      )}
+      <header class="workspace-header">
+        <AccountAvatar account={account} accountName={accountName} large />
+        <div class="workspace-header-copy account-profile-copy">
+          <div class="account-profile-name">
+            <h1>{accountName}</h1>
+            <span class={`status-badge account-${account.status}`}>
+              <span class="badge-dot" aria-hidden="true" />
+              {accountStatus(account)}
+            </span>
+          </div>
+          <p>
+            {platform?.displayName ?? account.platformId}
+            <span aria-hidden="true"> · </span>
+            {account.externalAccountId ?? "等待识别平台账号标识"}
+          </p>
+          {accountDescription !== undefined && (
+            <p class="account-profile-description">{accountDescription}</p>
+          )}
+        </div>
+        <div class="workspace-header-actions account-profile-actions">
+          <button
+            class="secondary-button compact-button"
+            type="button"
+            title={browserRuntimeLabel(browserStatus)}
+            disabled={
+              busyAction !== undefined ||
+              browserSwitchBusy ||
+              submissionBusy ||
+              Boolean(platform?.unavailableReason)
+            }
+            onClick={() => void runAction("open")}
+          >
+            <AccountBrowserStatus status={browserStatus} compact />
+            {browserStatus === "background"
+              ? "后台运行中"
+              : browserStatus === "window"
+                ? "运行中"
+                : "打开平台"}
+          </button>
+          <button
+            class="secondary-button compact-button"
+            type="button"
+            disabled={
+              busyAction !== undefined ||
+              browserSwitchBusy ||
+              submissionBusy ||
+              Boolean(platform?.unavailableReason)
+            }
+            onClick={() => void runAction("refresh")}
+          >
+            <Icon name="refresh" size={16} />
+            {busyAction === "refresh" ? "同步中" : "同步资料"}
+          </button>
+          <button
+            class="secondary-button compact-button"
+            type="button"
+            disabled={
+              busyAction !== undefined ||
+              browserSwitchBusy ||
+              submissionBusy ||
+              Boolean(platform?.unavailableReason) ||
+              account.status !== "authenticated"
+            }
+            onClick={() => void synchronizeContents()}
+          >
+            <Icon name="content" size={16} />
+            {busyAction === "contents" ? "同步中" : "同步作品"}
+          </button>
+        </div>
+      </header>
+
+      <nav class="workspace-tabs" aria-label="账号内容">
+        <button
+          class={activeTab === "overview" ? "active" : undefined}
+          type="button"
+          aria-current={activeTab === "overview" ? "page" : undefined}
+          onClick={() => setActiveTab("overview")}
+        >
+          概览
+        </button>
+        <button
+          class={activeTab === "contents" ? "active" : undefined}
+          type="button"
+          aria-current={activeTab === "contents" ? "page" : undefined}
+          onClick={() => setActiveTab("contents")}
+        >
+          平台内容
+        </button>
+        <button
+          class={activeTab === "settings" ? "active" : undefined}
+          type="button"
+          aria-current={activeTab === "settings" ? "page" : undefined}
+          onClick={() => setActiveTab("settings")}
+        >
+          设置{browserSwitchBusy ? " · 处理中" : ""}
+        </button>
+      </nav>
+
+      {/* Keep the controller mounted so switching tabs preserves switch progress. */}
+      <div class="account-settings" hidden={activeTab !== "settings"}>
+        <AccountPluginSettings
+          account={account}
+          context={context}
+          disabled={busyAction !== undefined || browserSwitchBusy}
+          onBusy={setSettingsBusy}
+          onUpdated={async (accountId) => {
+            const refreshed = await context.refreshAccounts();
+            onAccountsChanged(refreshed, accountId);
+          }}
+        />
+        <AccountBrowserSettings
+          disabled={submissionBusy || Boolean(platform?.unavailableReason)}
+          accountId={account.id}
+          profileId={account.profileId}
+          onBusy={setBrowserSwitchBusy}
+        />
+        <SettingsSection aria-label="移除账号">
+          <SettingsHeader
+            title="移除账号"
+            summary={<>移除本地账号及登录数据，保留平台账号。</>}
+            actions={
+              <button
+                class="secondary-button small-button account-remove-button"
+                type="button"
+                disabled={
+                  busyAction !== undefined ||
+                  browserSwitchBusy ||
+                  submissionBusy
+                }
+                onClick={() => void runAction("delete")}
+              >
+                <Icon name="delete" size={16} />
+                {busyAction === "delete" ? "移除中…" : "移除账号"}
+              </button>
+            }
+          />
+        </SettingsSection>
+      </div>
+
+      {activeTab === "overview" && (
+        <AccountOverview account={account} context={context} />
+      )}
+      {activeTab === "contents" && (
+        <PlatformContentsPage context={context} fixedAccountId={account.id} />
+      )}
+    </div>
+  );
+}
+
+export function AddAccountDialog({
+  context,
+  onClose,
+  onCreated,
+}: {
+  context: AppContext;
+  onClose(): void;
+  onCreated(accounts: readonly PlatformAccountView[], accountId: string): void;
+}) {
+  const [busyKey, setBusyKey] = useState<string>();
+
+  const createAccount = async (
+    platformId: string,
+    platformName: string,
+    loginEntry: PlatformLoginEntrySummary,
+  ) => {
+    const operationKey = `${platformId}:${loginEntry.id}`;
+    setBusyKey(operationKey);
+    context.setStatus(`正在创建 ${platformName} 独立浏览器环境…`, "busy");
+    try {
+      const account = await window.matrix.createPlatformAccount({ platformId });
+      const refreshed = await context.refreshAccounts();
+      onCreated(refreshed, account.id);
+      await window.matrix.openPlatformLogin({
+        accountId: account.id,
+        loginEntryId: loginEntry.id,
+      });
+      onClose();
+      context.setStatus(
+        `已打开 ${platformName} 登录窗口，登录成功后将自动识别账号`,
+      );
+    } catch (error) {
+      context.setStatus(errorMessage(error, "创建账号失败"), "error");
+    } finally {
+      setBusyKey(undefined);
+    }
+  };
+
+  return (
+    <div class="dialog-backdrop" role="presentation" onClick={onClose}>
+      <section
+        class="account-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-account-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header class="dialog-header">
+          <div>
+            <h2 id="add-account-title">添加账号</h2>
+            <p>选择平台后，将打开独立的登录窗口。</p>
+          </div>
+          <button
+            class="secondary-button compact-button"
+            type="button"
+            onClick={onClose}
+          >
+            取消
+          </button>
+        </header>
+        <div class="platform-grid dialog-platform-grid">
+          {context.platforms.flatMap((platform) =>
+            platform.loginEntries.map((entry) => {
+              const operationKey = `${platform.id}:${entry.id}`;
+              return (
+                <button
+                  class="platform-option"
+                  type="button"
+                  key={operationKey}
+                  disabled={busyKey !== undefined}
+                  onClick={() =>
+                    void createAccount(platform.id, platform.displayName, entry)
+                  }
+                >
+                  <PlatformIcon
+                    iconUrl={platform.iconUrl}
+                    platformName={platform.displayName}
+                  />
+                  <span>
+                    <strong>{platform.displayName}</strong>
+                    <small>
+                      {busyKey === operationKey
+                        ? "正在创建…"
+                        : platform.loginEntries.length > 1
+                          ? entry.displayName
+                          : "连接新账号"}
+                    </small>
+                  </span>
+                  <Icon name="arrow-up-right" size={16} />
+                </button>
+              );
+            }),
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AccountOverview({
+  account,
+  context,
+}: {
+  account: PlatformAccountView;
+  context: AppContext;
+}) {
+  const [refreshToken, setRefreshToken] = useState(0);
+  useEffect(
+    () =>
+      window.matrix.onTasksChanged(() => setRefreshToken((value) => value + 1)),
+    [],
+  );
+  const [contents, setContents] = useState<PlatformContentSnapshot[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    void window.matrix
+      .listPlatformContents({ accountId: account.id })
+      .then((result) => {
+        if (active) setContents(result.items.slice(0, 4));
+      })
+      .catch((error) => {
+        if (active)
+          context.setStatus(errorMessage(error, "平台内容加载失败"), "error");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [account.id, context, refreshToken]);
+
+  const openContent = async (content: PlatformContentSnapshot) => {
+    if (
+      !content.contentUrl ||
+      !isPlatformAvailable(context.platforms, content.platformId)
+    )
+      return;
+    try {
+      await window.matrix.openPlatformContent({
+        accountId: account.id,
+        externalContentId: content.externalContentId,
+      });
+    } catch (error) {
+      context.setStatus(errorMessage(error, "打开平台内容失败"), "error");
+    }
+  };
+
+  return (
+    <div class="account-overview">
+      <section class="account-stat-grid" aria-label="账号数据概览">
+        <AccountStat
+          label="粉丝"
+          value={accountInformation(account, "follower_count")}
+        />
+        <AccountStat
+          label="获赞"
+          value={accountInformation(account, "like_count")}
+        />
+        <AccountStat
+          label="内容"
+          value={accountInformation(account, "content_count")}
+        />
+      </section>
+      <section class="data-surface">
+        <header class="surface-header">
+          <div>
+            <h2>最近内容</h2>
+            <p>该账号最近一次同步保存的平台作品。</p>
+          </div>
+        </header>
+        {loading ? (
+          <EmptyState title="正在加载平台内容…" />
+        ) : contents.length === 0 ? (
+          <EmptyState
+            title="还没有平台内容"
+            detail="切换到“平台内容”并执行同步。"
+          />
+        ) : (
+          <div class="account-recent-grid">
+            {contents.map((content) => (
+              <button
+                class="account-recent-card"
+                type="button"
+                key={content.id}
+                disabled={
+                  !content.contentUrl ||
+                  !isPlatformAvailable(context.platforms, content.platformId)
+                }
+                aria-disabled={
+                  !content.contentUrl ||
+                  !isPlatformAvailable(context.platforms, content.platformId)
+                }
+                tabIndex={
+                  content.contentUrl &&
+                  isPlatformAvailable(context.platforms, content.platformId)
+                    ? 0
+                    : -1
+                }
+                title={
+                  !isPlatformAvailable(context.platforms, content.platformId)
+                    ? "平台插件不可用，无法打开作品"
+                    : content.contentUrl
+                      ? "在浏览器中打开平台内容"
+                      : "该内容没有可用链接"
+                }
+                onClick={() => void openContent(content)}
+              >
+                <RecentContentCover content={content} />
+                <span class="account-recent-card-body">
+                  <span class="account-recent-card-heading">
+                    <strong>
+                      {content.title ?? content.description ?? "未命名作品"}
+                    </strong>
+                    <small>{contentTypeLabel(content.contentType)}</small>
+                  </span>
+                  <span class="account-recent-metrics">
+                    <MetricValue
+                      label="播放"
+                      value={content.metrics.viewCount}
+                    />
+                    <MetricValue
+                      label="点赞"
+                      value={content.metrics.likeCount}
+                    />
+                    <MetricValue
+                      label="评论"
+                      value={content.metrics.commentCount}
+                    />
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function RecentContentCover({ content }: { content: PlatformContentSnapshot }) {
+  const [failed, setFailed] = useState(false);
+  if (!content.coverUrl || failed) {
+    return (
+      <span class="account-recent-cover account-recent-cover-fallback">
+        <Icon
+          name={content.contentType === "video" ? "video" : "image"}
+          size={22}
+        />
+      </span>
+    );
+  }
+  return (
+    <img
+      class="account-recent-cover"
+      src={content.coverUrl}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function MetricValue({ label, value }: { label: string; value?: number }) {
+  return (
+    <span>
+      <small>{label}</small>
+      <strong>
+        {value === undefined ? "—" : formatAccountInfoValue(value)}
+      </strong>
+    </span>
+  );
+}
+
+function contentTypeLabel(
+  type: PlatformContentSnapshot["contentType"],
+): string {
+  return type === "video" ? "视频" : type === "image_text" ? "图文" : "未知";
+}
+
+export function AccountAvatar({
+  account,
+  accountName,
+  large = false,
+}: {
+  account: PlatformAccountView;
+  accountName: string;
+  large?: boolean;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const className = `account-avatar${large ? " account-avatar-large" : ""}`;
+  if (!account.avatarUrl?.trim() || imageFailed) {
+    return (
+      <span class={`${className} account-avatar-fallback`} aria-hidden="true">
+        {Array.from(accountName.trim())[0] ?? "账"}
+      </span>
+    );
+  }
+  return (
+    <img
+      class={className}
+      src={account.avatarUrl.trim()}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setImageFailed(true)}
+    />
+  );
+}
+
+function AccountStat({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | number;
+}) {
+  return (
+    <div class="account-stat">
+      <small>{label}</small>
+      <strong>
+        {value === undefined ? "—" : formatAccountInfoValue(value)}
+      </strong>
+    </div>
+  );
+}
+
+function EmptyState({ title, detail }: { title: string; detail?: string }) {
+  return (
+    <div class="empty-state">
+      <strong>{title}</strong>
+      {detail && <p>{detail}</p>}
+    </div>
+  );
+}
+
+function accountInformation(
+  account: PlatformAccountView,
+  key: PlatformAccountInfoKey,
+): string | number | undefined {
+  return account.accountInfo?.find((item) => item.key === key)?.value;
+}
+
+function formatAccountInfoValue(value: string | number): string {
+  return typeof value === "number"
+    ? new Intl.NumberFormat("zh-CN", { notation: "compact" }).format(value)
+    : value;
+}

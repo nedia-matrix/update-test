@@ -40,7 +40,7 @@ const pluginVerification = spawnSync(
   [
     "--experimental-strip-types",
     join(import.meta.dirname, "verify-platform-plugins.mts"),
-    join(desktop, "resources/plugins"),
+    join(desktop, "../../resources/desktop/plugins"),
   ],
   { env: verificationEnvironment, stdio: "inherit" },
 );

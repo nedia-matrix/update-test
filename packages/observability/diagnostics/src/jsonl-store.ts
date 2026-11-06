@@ -1,3 +1,4 @@
+import { normalizeRecord } from "./normalize-record.js";
 import { createReadStream } from "node:fs";
 import { appendFile, mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -361,28 +362,4 @@ async function fileSize(path: string) {
   } catch {
     return 0;
   }
-}
-
-function normalizeRecord(value: unknown): DiagnosticRecord | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Partial<DiagnosticRecord>;
-  if (
-    typeof record.traceId !== "string" ||
-    typeof record.sequence !== "number" ||
-    typeof record.timestamp !== "string" ||
-    typeof record.level !== "string" ||
-    typeof record.operation !== "string" ||
-    typeof record.component !== "string" ||
-    typeof record.event !== "string"
-  ) {
-    return null;
-  }
-  return {
-    ...(record as DiagnosticRecord),
-    schemaVersion: 2,
-    eventId:
-      typeof record.eventId === "string"
-        ? record.eventId
-        : `${record.traceId}:${record.sequence}`,
-  };
 }

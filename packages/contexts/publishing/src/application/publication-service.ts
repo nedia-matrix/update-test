@@ -206,38 +206,7 @@ export class PublicationService implements PublicationUseCases {
   queryTasks(input: PublicationQuery): PublicationQueryResult {
     validatePublicationQuery(input);
     const query = this.dependencies.query;
-    if (!query) {
-      const all = this.listTasks();
-      const base = all.filter(
-        (item) =>
-          (!input.platformId || item.platformId === input.platformId) &&
-          (!input.accountId || item.accountId === input.accountId) &&
-          (!input.keyword?.trim() ||
-            `${item.title ?? ""} ${item.body}`
-              .toLowerCase()
-              .includes(input.keyword.trim().toLowerCase())),
-      );
-      const filtered = base.filter(
-        (item) =>
-          (input.view === "all" ||
-            ["action_required", "in_progress"].includes(
-              item.effectiveDisplayGroup,
-            ) ||
-            (item.effectiveDisplayGroup === "attention_required" &&
-              item.attentionResolution === null)) &&
-          (!input.group || item.effectiveDisplayGroup === input.group) &&
-          (!input.state || item.state === input.state) &&
-          (!input.createdFrom || item.createdAt >= input.createdFrom) &&
-          (!input.createdTo || item.createdAt <= input.createdTo),
-      );
-      return {
-        items: filtered.slice(0, input.limit ?? 30),
-        counts: countTaskGroups(all),
-        tabCounts: countTaskGroups(base),
-        total: filtered.length,
-        nextCursor: null,
-      };
-    }
+    if (!query) throw new Error("Publication query storage is unavailable");
     const result = query.query(input);
     return {
       items: result.records.map((record) => this.taskSummary(record)),
@@ -506,51 +475,6 @@ function validatePublicationQuery(input: PublicationQuery): void {
       "Publication query createdFrom must not exceed createdTo",
     );
   }
-}
-
-function countTaskGroups(
-  items: readonly PublicationTaskSummary[],
-): PublicationQueryResult["counts"] {
-  return items.reduce(
-    (counts, item) => {
-      counts.all += 1;
-      if (item.effectiveDisplayGroup === "action_required")
-        counts.actionRequired += 1;
-      if (
-        item.effectiveDisplayGroup === "attention_required" &&
-        item.attentionResolution === null
-      ) {
-        counts.openAttentionRequired += 1;
-      }
-      if (item.effectiveDisplayGroup === "attention_required")
-        counts.attentionRequired += 1;
-      if (item.effectiveDisplayGroup === "in_progress") counts.inProgress += 1;
-      if (item.effectiveDisplayGroup === "completed") {
-        counts.completed += 1;
-        if (item.attentionResolution === "confirmed_published")
-          counts.completedManual += 1;
-        else counts.completedAutomatic += 1;
-      }
-      if (item.effectiveDisplayGroup === "closed") counts.closed += 1;
-      counts.pending =
-        counts.actionRequired +
-        counts.openAttentionRequired +
-        counts.inProgress;
-      return counts;
-    },
-    {
-      actionRequired: 0,
-      openAttentionRequired: 0,
-      inProgress: 0,
-      completed: 0,
-      completedAutomatic: 0,
-      completedManual: 0,
-      attentionRequired: 0,
-      closed: 0,
-      all: 0,
-      pending: 0,
-    },
-  );
 }
 
 export type { PrepareRemoteDraftRequest };

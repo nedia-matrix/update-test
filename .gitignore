@@ -13,14 +13,14 @@ coverage/
 !.env.example
 .local/
 output/
-apps/desktop/resources/update-helper/
-apps/desktop/resources/plugins/
-apps/desktop/.plugins-development/
-apps/desktop/.plugins-build/
-apps/tauri/runtime/
-apps/tauri/src-tauri/target/
-apps/tauri/src-tauri/gen/
+resources/desktop/update-helper/
+resources/desktop/plugins/
+resources/desktop/plugins-development/
+resources/desktop/plugins-build/
+apps/desktop-tauri/runtime/
+apps/desktop-tauri/src-tauri/target/
+apps/desktop-tauri/src-tauri/gen/
 
-apps/desktop/resources/native/
+resources/desktop/native/
 
-apps/tauri/dist-installers/
+apps/desktop-tauri/dist-installers/

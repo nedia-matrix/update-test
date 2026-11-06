@@ -122,7 +122,18 @@ export class PublicationArchiveMaintenance {
       const initialAssets = await this.assets.list();
       const initialBytes = sumAssetBytes(initialAssets);
       const removedPublicationIds: string[] = [];
-      let remaining = this.publications.list();
+      const remaining = this.publications.list();
+      const sizes = new Map(
+        initialAssets.map((asset) => [asset.relativePath, asset.size]),
+      );
+      const references = new Map<string, number>();
+      for (const record of remaining)
+        for (const path of publicationAssetPaths([record]))
+          references.set(path, (references.get(path) ?? 0) + 1);
+      let referencedBytes = sumAssetBytes(
+        initialAssets,
+        new Set(references.keys()),
+      );
       const candidates = remaining
         .filter((record) =>
           Publication.rehydrate(record).canBeAutomaticallyCleanedFromArchive(
@@ -144,15 +155,15 @@ export class PublicationArchiveMaintenance {
           policy.retentionBefore !== undefined &&
           current.createdAt < policy.retentionBefore.toISOString();
         const overQuota =
-          policy.maxBytes !== undefined &&
-          sumAssetBytes(initialAssets, publicationAssetPaths(remaining)) >
-            policy.maxBytes;
+          policy.maxBytes !== undefined && referencedBytes > policy.maxBytes;
         if (!expired && !overQuota) continue;
         this.publications.remove(candidate.publication.id);
         removedPublicationIds.push(candidate.publication.id);
-        remaining = remaining.filter(
-          (record) => record.publication.id !== candidate.publication.id,
-        );
+        for (const path of publicationAssetPaths([current])) {
+          const count = references.get(path)! - 1;
+          references.set(path, count);
+          if (count === 0) referencedBytes -= sizes.get(path) ?? 0;
+        }
       }
       return this.removeUnreferencedAssets(
         removedPublicationIds,

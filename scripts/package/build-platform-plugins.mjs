@@ -21,13 +21,13 @@ import { signingConfiguration } from "../publish/update-manifest.mjs";
 import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "../.."),
-  desktop = join(root, "apps/desktop");
-const require = createRequire(join(desktop, "package.json"));
+  resources = join(root, "resources/desktop");
+const require = createRequire(join(root, "package.json"));
 const { build, transformWithEsbuild } = await import(
   pathToFileURL(require.resolve("vite")).href
 );
 const development = process.argv.includes("--development");
-// Resolve build tooling from the desktop workspace, just like Vite.
+// Repository packaging tools are shared by both desktop shells.
 const obfuscator = development ? undefined : require("javascript-obfuscator");
 const legacyXiaohongshu = process.argv.includes("--legacy-xiaohongshu");
 const pluginSourceRoot = legacyXiaohongshu ? "plugins-legacy" : "plugins";
@@ -39,14 +39,11 @@ const output = resolve(
           ".local/platform-plugins-legacy",
           development ? "development" : "release",
         )
-      : join(
-          desktop,
-          development ? ".plugins-development" : "resources/plugins",
-        )),
+      : join(resources, development ? "plugins-development" : "plugins")),
 );
 const work = legacyXiaohongshu
   ? join(root, ".local/platform-plugins-legacy/work")
-  : join(desktop, ".plugins-build");
+  : join(resources, "plugins-build");
 const platforms = legacyXiaohongshu
   ? ["xiaohongshu"]
   : [

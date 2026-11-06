@@ -85,11 +85,11 @@ jobs:
       - name: Set up Go for the standalone update helper
         uses: actions/setup-go@v6
         with:
-          go-version-file: apps/desktop/installer/go.mod
+          go-version-file: tools/update-helper/go.mod
           cache: false
 
       - name: Test update helper
-        working-directory: apps/desktop/installer
+        working-directory: tools/update-helper
         run: go test ./...
 
       - name: Set up MSVC for the runtime lock

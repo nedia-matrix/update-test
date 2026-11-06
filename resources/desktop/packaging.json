@@ -1,0 +1,83 @@
+{
+  "appId": "com.nediamatrix.desktop",
+  "productName": "NediaMatrix",
+  "compression": "maximum",
+  "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+  "electronLanguages": ["zh-CN", "en-US"],
+  "directories": {
+    "output": "dist",
+    "buildResources": "../../resources/desktop"
+  },
+  "files": ["out/**/*", "package.json"],
+  "extraResources": [
+    {
+      "from": "../../resources/desktop/logo.png",
+      "to": "logo.png"
+    },
+    {
+      "from": "../../resources/desktop/mac-tray.png",
+      "to": "mac-tray.png"
+    },
+    {
+      "from": "../../resources/desktop/plugins",
+      "to": "plugins",
+      "filter": [
+        "platform.douyin.nmp",
+        "platform.kuaishou.nmp",
+        "platform.xiaohongshu.nmp"
+      ]
+    }
+  ],
+  "mac": {
+    "icon": "../../resources/desktop/icon.icns",
+    "identity": null,
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["arm64", "x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["arm64", "x64"]
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "../../resources/desktop/update-helper/${arch}/nedia-update-helper",
+        "to": "update-helper/nedia-update-helper"
+      },
+      {
+        "from": "../../resources/desktop/native/darwin-${arch}",
+        "to": "native/darwin-${arch}"
+      }
+    ]
+  },
+  "win": {
+    "icon": "../../resources/desktop/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "../../resources/desktop/update-helper/nedia-update-helper.exe",
+        "to": "update-helper/nedia-update-helper.exe"
+      },
+      {
+        "from": "../../resources/desktop/native/win32-${arch}",
+        "to": "native/win32-${arch}"
+      }
+    ]
+  },
+  "nsis": {
+    "include": "../../scripts/package/windows-installer.nsh",
+    "artifactName": "${productName}-${version}-win-setup-${arch}.${ext}",
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "portable": {
+    "artifactName": "${productName}-${version}-win-portable-${arch}.${ext}"
+  }
+}

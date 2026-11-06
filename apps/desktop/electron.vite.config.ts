@@ -21,15 +21,20 @@ const updateSourceDefine = {
 
 export default defineConfig({
   main: {
+    build: {
+      externalizeDeps: {
+        exclude: [
+          "@nedia-matrix/desktop-runtime",
+          "@nedia-matrix/desktop-contracts",
+          "@nedia-matrix/desktop-client",
+        ],
+      },
+      rollupOptions: { external: ["electron", "playwright-core"] },
+    },
     define: {
       ...updateSourceDefine,
       __NEDIA_UPDATE_PUBLIC_KEYS__: JSON.stringify(updateKeys),
       __NEDIA_UPDATE_DISTRIBUTION__: JSON.stringify(distribution),
-    },
-    build: {
-      rollupOptions: {
-        external: ["electron", "playwright-core"],
-      },
     },
   },
   preload: {

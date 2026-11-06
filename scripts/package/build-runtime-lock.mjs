@@ -14,7 +14,7 @@ if (
   throw new Error("Unsupported runtime lock cross-compilation target");
 if (!["arm64", "x64"].includes(arch))
   throw new Error("Unsupported runtime lock architecture");
-const desktop = resolve(import.meta.dirname, "../../apps/desktop");
+const root = resolve(import.meta.dirname, "../..");
 let headers =
   process.env.NEDIA_NODE_HEADERS ??
   join(
@@ -26,7 +26,7 @@ let headers =
     "include/node",
   );
 const version = process.versions.node;
-const cache = resolve(desktop, "../../.local/native-node", version);
+const cache = resolve(root, ".local/native-node", version);
 function fetchOfficial(name, output) {
   mkdirSync(cache, { recursive: true });
   const download = (url, file) => {
@@ -67,9 +67,12 @@ if (!existsSync(join(headers, "node_api.h"))) {
     if (result.status !== 0) throw new Error("Node headers extraction failed");
   }
 }
-const output = join(desktop, "resources/native", `${platform}-${arch}`);
+const output = join(root, "resources/desktop/native", `${platform}-${arch}`);
 mkdirSync(output, { recursive: true });
-const source = join(desktop, "native/runtime-lock/runtime-lock.c");
+const source = join(
+  root,
+  "packages/desktop/runtime/native/runtime-lock/runtime-lock.c",
+);
 const binary = join(output, "runtime-lock.node");
 let args;
 if (platform === "win32" && process.platform !== "win32") {

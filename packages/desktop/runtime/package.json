@@ -1,0 +1,30 @@
+{
+  "name": "@nedia-matrix/desktop-runtime",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts",
+    "./plugins/plugin-protocol.mjs": "./src/plugins/plugin-protocol.mjs"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nedia-matrix/account-management": "workspace:*",
+    "@nedia-matrix/automation-engine": "workspace:*",
+    "@nedia-matrix/automation-playwright": "workspace:*",
+    "@nedia-matrix/diagnostics": "workspace:*",
+    "@nedia-matrix/platform-content": "workspace:*",
+    "@nedia-matrix/platform-sdk": "workspace:*",
+    "@nedia-matrix/publishing": "workspace:*",
+    "@nedia-matrix/metadata-maintenance": "workspace:*",
+    "@nedia-matrix/desktop-contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@nedia-matrix/tsconfig": "workspace:*",
+    "@types/node": "^26.1.2",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

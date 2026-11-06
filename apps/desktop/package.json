@@ -1,7 +1,7 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.8.2",
+  "version": "0.8.3",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -19,7 +19,11 @@
     "@nedia-matrix/platform-content": "workspace:*",
     "@nedia-matrix/platform-sdk": "workspace:*",
     "@nedia-matrix/publishing": "workspace:*",
-    "preact": "^10.29.8"
+    "preact": "^10.29.8",
+    "@nedia-matrix/metadata-maintenance": "workspace:*",
+    "@nedia-matrix/desktop-contracts": "workspace:*",
+    "@nedia-matrix/desktop-client": "workspace:*",
+    "@nedia-matrix/desktop-runtime": "workspace:*"
   },
   "devDependencies": {
     "@nedia-matrix/tsconfig": "workspace:*",
@@ -33,100 +37,6 @@
     "vitest": "catalog:"
   },
   "build": {
-    "appId": "com.nediamatrix.desktop",
-    "productName": "NediaMatrix",
-    "compression": "maximum",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "electronLanguages": [
-      "zh-CN",
-      "en-US"
-    ],
-    "directories": {
-      "output": "dist",
-      "buildResources": "resources"
-    },
-    "files": [
-      "out/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/logo.png",
-        "to": "logo.png"
-      },
-      {
-        "from": "resources/mac-tray.png",
-        "to": "mac-tray.png"
-      },
-      {
-        "from": "resources/plugins",
-        "to": "plugins",
-        "filter": [
-          "platform.douyin.nmp",
-          "platform.kuaishou.nmp",
-          "platform.xiaohongshu.nmp"
-        ]
-      }
-    ],
-    "mac": {
-      "icon": "resources/icon.icns",
-      "identity": null,
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "extraResources": [
-        {
-          "from": "resources/update-helper/${arch}/nedia-update-helper",
-          "to": "update-helper/nedia-update-helper"
-        },
-        {
-          "from": "resources/native/darwin-${arch}",
-          "to": "native/darwin-${arch}"
-        }
-      ]
-    },
-    "win": {
-      "icon": "resources/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "extraResources": [
-        {
-          "from": "resources/update-helper/nedia-update-helper.exe",
-          "to": "update-helper/nedia-update-helper.exe"
-        },
-        {
-          "from": "resources/native/win32-${arch}",
-          "to": "native/win32-${arch}"
-        }
-      ]
-    },
-    "nsis": {
-      "include": "../../scripts/package/windows-installer.nsh",
-      "artifactName": "${productName}-${version}-win-setup-${arch}.${ext}",
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "portable": {
-      "artifactName": "${productName}-${version}-win-portable-${arch}.${ext}"
-    }
+    "extends": "../../resources/desktop/packaging.json"
   }
 }

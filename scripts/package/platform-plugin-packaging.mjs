@@ -19,6 +19,6 @@ export function platformPluginBuildEnvironment(
     ...environment,
     ...(!explicitKey ? { NEDIA_UPDATE_PRIVATE_KEY_FILE: localPrivateKey } : {}),
     // Packaging always consumes the canonical resource directory, never a development/output override.
-    NEDIA_PLUGIN_OUTPUT: join(root, "apps/desktop/resources/plugins"),
+    NEDIA_PLUGIN_OUTPUT: join(root, "resources/desktop/plugins"),
   };
 }
