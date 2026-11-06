@@ -58,6 +58,27 @@ export async function syncPublicGiteeTag({
       )
     )
       delete env[key];
+  const git = (...args) =>
+    runGit("git", args, {
+      cwd: sourceDirectory,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const repositoryUrl = `https://gitee.com/${repository}.git`;
+  const hasRemote = git("remote").split("\n").includes("gitee");
+  if (hasRemote) {
+    for (const args of [
+      ["remote", "get-url", "gitee"],
+      ["remote", "get-url", "--push", "--all", "gitee"],
+    ])
+      if (git(...args) !== repositoryUrl)
+        throw new Error("Gitee remote 地址与发布目的地不一致，已停止推送");
+  }
+  const branch = git("symbolic-ref", "--quiet", "--short", "HEAD");
+  if (git("rev-parse", "HEAD") !== commit)
+    throw new Error("Gitee 源码 HEAD 与构建 commit 不一致，已停止推送");
+  if (!hasRemote) git("remote", "add", "gitee", repositoryUrl);
   Object.assign(env, {
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_COUNT: "1",
@@ -71,7 +92,9 @@ export async function syncPublicGiteeTag({
         "-c",
         "credential.helper=",
         "push",
-        `https://gitee.com/${repository}.git`,
+        "--atomic",
+        "gitee",
+        `HEAD:refs/heads/${branch}`,
         `${commit}:refs/tags/v${version}`,
       ],
       {
@@ -110,7 +133,7 @@ export async function syncPublicGiteeTag({
       error?.code === "ETIMEDOUT"
     )
       reason = "连接 Gitee 失败或超时，请检查本机网络";
-    throw new Error(`Gitee tag 同步失败：${reason}；不会强制覆盖`);
+    throw new Error(`Gitee 分支和 tag 同步失败：${reason}；不会强制覆盖`);
   }
 }
 
@@ -345,7 +368,7 @@ export async function publishGiteeRelease({
         tagPresent: !!targetTag,
         files: files.map(({ name, size, sha256 }) => ({ name, size, sha256 })),
       };
-    if (!targetTag && syncTag) {
+    if (syncTag) {
       await syncPublicGiteeTag({
         repository,
         version,
