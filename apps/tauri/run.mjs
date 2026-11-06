@@ -13,7 +13,7 @@ import { platformPluginBuildEnvironment } from "../../scripts/package/platform-p
 import { buildTauriPortable } from "../../scripts/package/build-tauri-portable.mjs";
 import { buildTauriNsis } from "../../scripts/package/build-tauri-nsis.mjs";
 import { configuredPublicKeys } from "../../scripts/publish/update-keys.mjs";
-import { readReleaseConfiguration } from "../../scripts/publish/up-release-version.mjs";
+import { readReleaseConfiguration } from "../../scripts/publish/release-version.mjs";
 import {
   publicKeyFingerprint,
   sha256File,

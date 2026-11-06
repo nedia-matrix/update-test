@@ -81,7 +81,7 @@ export function upReleaseVersion(root, args = []) {
   const part = args[0] ?? "patch";
   if (args.length > 1 || !Object.hasOwn(indices, part))
     throw new Error(
-      "Usage: node scripts/publish/up-release-version.mjs [major|minor|patch|1|2|3]",
+      "Usage: node scripts/publish/release-version.mjs [major|minor|patch|1|2|3]",
     );
   const { version: current } = readReleaseConfiguration(root);
   const segments = current.split(".").map(BigInt);

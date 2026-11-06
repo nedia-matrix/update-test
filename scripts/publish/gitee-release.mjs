@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { openAsBlob } from "node:fs";
+import { existsSync, openAsBlob } from "node:fs";
 import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -24,14 +24,14 @@ export async function syncPublicGiteeTag({
   environment = process.env,
   fetcher = fetch,
   runGit = execFileSync,
+  sourceDirectory = resolve(import.meta.dirname, "../.."),
 }) {
   repository = giteeRepository(repository);
   updateArtifactTargets(version);
   if (!/^[a-f0-9]{40}$/.test(commit ?? ""))
     throw new Error("同步 tag 须指定完整构建 SHA");
-  if (!environment.GITHUB_REPOSITORY)
-    throw new Error("同步公开 tag 需要 GITHUB_REPOSITORY 指定公开构建仓库");
-  const github = giteeRepository(environment.GITHUB_REPOSITORY);
+  if (existsSync(join(sourceDirectory, "scripts/publish/sync-public.sh")))
+    throw new Error("禁止推送开发仓库历史，请从已同步的公开源码目录发布 Gitee");
   const read = async (url, headers = {}) => {
     const response = await fetcher(url, {
       headers,
@@ -40,22 +40,10 @@ export async function syncPublicGiteeTag({
     });
     if (!response.ok || response.status >= 300) {
       await response.body?.cancel();
-      throw new Error("公开构建 commit 或 Gitee 身份核验失败");
+      throw new Error("Gitee 身份核验失败");
     }
     return boundedJson(response);
   };
-  // A private working copy must never be pushed to a public release repository.
-  // Prove the exact reachable commit is already public, without a GitHub token.
-  const publicRepository = await read(`https://api.github.com/repos/${github}`);
-  const publicCommit = await read(
-    `https://api.github.com/repos/${github}/git/commits/${commit}`,
-  );
-  if (
-    publicRepository.full_name !== github ||
-    publicRepository.private !== false ||
-    publicCommit.sha !== commit
-  )
-    throw new Error("禁止同步尚未公开的 GitHub 构建 commit");
   const user = await read("https://gitee.com/api/v5/user", {
     Authorization: `Bearer ${token}`,
   });
@@ -65,7 +53,7 @@ export async function syncPublicGiteeTag({
   for (const key of Object.keys(env))
     if (
       /^GIT_(CONFIG|TRACE|CURL_VERBOSE)/.test(key) ||
-      /^(NEDIA_UPDATE_PRIVATE_KEY|NEDIA_UPDATE_PRIVATE_KEY_FILE|NEDIA_GITEE_TOKEN)$/.test(
+      /^(NEDIA_UPDATE_PRIVATE_KEY|NEDIA_UPDATE_PRIVATE_KEY_FILE|NEDIA_GITEE_TOKEN|NEDIA_GITEE_TOKEN_FILE)$/.test(
         key,
       )
     )
@@ -87,7 +75,7 @@ export async function syncPublicGiteeTag({
         `${commit}:refs/tags/v${version}`,
       ],
       {
-        cwd: resolve(import.meta.dirname, "../.."),
+        cwd: sourceDirectory,
         env,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 120000,
@@ -98,7 +86,8 @@ export async function syncPublicGiteeTag({
     const stderr = String(error?.stderr ?? "");
     let reason = "Git 推送失败，请检查写入权限、网络及已有 tag";
     if (/shallow update not allowed|shallow object/i.test(stderr))
-      reason = "远端拒绝浅克隆历史；请先 git fetch --unshallow，使用完整公开历史";
+      reason =
+        "远端拒绝浅克隆历史；请先 git fetch --unshallow，使用完整公开历史";
     else if (
       /authentication failed|could not read Username|HTTP Basic: Access denied|returned error: (401|403)|incorrect username or password/i.test(
         stderr,
