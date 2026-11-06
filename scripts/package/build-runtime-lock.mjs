@@ -5,7 +5,13 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-const arch = process.argv[2] ?? process.arch;
+const arch = process.argv[2] ?? process.env.NEDIA_TARGET_ARCH ?? process.arch;
+const platform = process.env.NEDIA_TARGET_PLATFORM ?? process.platform;
+if (
+  platform !== process.platform &&
+  !(platform === "win32" && arch === "x64" && process.platform === "darwin")
+)
+  throw new Error("Unsupported runtime lock cross-compilation target");
 if (!["arm64", "x64"].includes(arch))
   throw new Error("Unsupported runtime lock architecture");
 const desktop = resolve(import.meta.dirname, "../../apps/desktop");
@@ -61,21 +67,25 @@ if (!existsSync(join(headers, "node_api.h"))) {
     if (result.status !== 0) throw new Error("Node headers extraction failed");
   }
 }
-let nodeLibrary = process.env.NEDIA_NODE_LIB;
-if (process.platform === "win32" && !nodeLibrary) {
-  nodeLibrary = join(cache, "node.lib");
-  if (!existsSync(nodeLibrary))
-    fetchOfficial(`win-${arch}/node.lib`, nodeLibrary);
-}
-const output = join(desktop, "resources/native", `${process.platform}-${arch}`);
+const output = join(desktop, "resources/native", `${platform}-${arch}`);
 mkdirSync(output, { recursive: true });
 const source = join(desktop, "native/runtime-lock/runtime-lock.c");
 const binary = join(output, "runtime-lock.node");
 let args;
-if (process.platform === "win32") {
-  if (arch !== process.arch || !nodeLibrary)
+if (platform === "win32" && process.platform !== "win32") {
+  args = [
+    "-shared",
+    "-O2",
+    `-I${headers}`,
+    source,
+    "-o",
+    binary,
+    "-static-libgcc",
+  ];
+} else if (process.platform === "win32") {
+  if (arch !== process.arch)
     throw new Error(
-      "Windows requires matching architecture and NEDIA_NODE_LIB pointing to node.lib; run from a Visual Studio developer shell",
+      "Windows requires matching architecture; run from a Visual Studio developer shell",
     );
   args = [
     "/nologo",
@@ -85,7 +95,6 @@ if (process.platform === "win32") {
     source,
     `/Fo${join(output, "runtime-lock.obj")}`,
     "/link",
-    nodeLibrary,
     `/OUT:${binary}`,
   ];
 } else {
@@ -111,9 +120,25 @@ if (process.platform === "win32") {
   else if (arch !== process.arch)
     throw new Error("Cross-compilation is only supported on macOS");
 }
-const result = spawnSync(process.platform === "win32" ? "cl" : "cc", args, {
-  stdio: "inherit",
-});
+const result = spawnSync(
+  platform === "win32"
+    ? process.platform === "win32"
+      ? "cl"
+      : "x86_64-w64-mingw32-gcc"
+    : "cc",
+  args,
+  {
+    stdio: "inherit",
+  },
+);
+if (
+  result.error?.code === "ENOENT" &&
+  platform === "win32" &&
+  process.platform !== "win32"
+)
+  throw new Error(
+    "Windows cross-compilation requires MinGW-w64: brew install mingw-w64",
+  );
 if (result.error) throw result.error;
 if (result.status !== 0) throw new Error("Runtime lock native build failed");
 console.log(binary);

@@ -5,6 +5,24 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+/* Resolve Node-API from the host so both node.exe and renamed Electron apps work. */
+#define NODE_API_FUNCTIONS(X) \
+  X(napi_get_cb_info, (napi_env, napi_callback_info, size_t *, napi_value *, napi_value *, void **)) \
+  X(napi_throw_type_error, (napi_env, const char *, const char *)) \
+  X(napi_get_value_string_utf16, (napi_env, napi_value, char16_t *, size_t, size_t *)) \
+  X(napi_get_boolean, (napi_env, bool, napi_value *)) \
+  X(napi_throw_error, (napi_env, const char *, const char *)) \
+  X(napi_create_function, (napi_env, const char *, size_t, napi_callback, void *, napi_value *)) \
+  X(napi_set_named_property, (napi_env, napi_value, const char *, napi_value))
+#define DECLARE_NODE_API(name, args) static napi_status (NAPI_CDECL *win_##name) args;
+NODE_API_FUNCTIONS(DECLARE_NODE_API)
+#define napi_get_cb_info win_napi_get_cb_info
+#define napi_throw_type_error win_napi_throw_type_error
+#define napi_get_value_string_utf16 win_napi_get_value_string_utf16
+#define napi_get_boolean win_napi_get_boolean
+#define napi_throw_error win_napi_throw_error
+#define napi_create_function win_napi_create_function
+#define napi_set_named_property win_napi_set_named_property
 #else
 #include <fcntl.h>
 #include <sys/file.h>
@@ -61,6 +79,15 @@ static napi_value acquire(napi_env env, napi_callback_info info) {
   napi_get_boolean(env, true, &result); return result;
 }
 NAPI_MODULE_INIT() {
+#ifdef _WIN32
+  HMODULE host = GetModuleHandleW(NULL);
+#define LOAD_NODE_API(name, args) { \
+    FARPROC symbol = GetProcAddress(host, #name); \
+    if (!symbol) return NULL; \
+    memcpy(&win_##name, &symbol, sizeof(symbol)); \
+  }
+  NODE_API_FUNCTIONS(LOAD_NODE_API)
+#endif
   napi_value fn;
   napi_create_function(env, "acquire", NAPI_AUTO_LENGTH, acquire, NULL, &fn);
   napi_set_named_property(env, exports, "acquire", fn);

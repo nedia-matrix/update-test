@@ -17,6 +17,12 @@ import { readReleaseConfiguration } from "../../scripts/publish/up-release-versi
 const here = import.meta.dirname;
 const root = resolve(here, "../..");
 const desktop = join(root, "apps/desktop");
+const arch = process.env.NEDIA_TARGET_ARCH ?? process.arch;
+if (
+  !["arm64", "x64"].includes(arch) ||
+  (arch !== process.arch && process.platform !== "darwin")
+)
+  throw new Error("Unsupported Tauri target architecture");
 const require = createRequire(join(desktop, "package.json"));
 const { build } = await import(pathToFileURL(require.resolve("vite")).href);
 const { version: appVersion } = readReleaseConfiguration(root);
@@ -71,7 +77,7 @@ if (trust === "development")
   );
 execFileSync(
   process.execPath,
-  [join(root, "scripts/package/build-runtime-lock.mjs")],
+  [join(root, "scripts/package/build-runtime-lock.mjs"), arch],
   { stdio: "inherit" },
 );
 const aliases = [
@@ -108,9 +114,11 @@ await build({
   },
   ssr: { noExternal: [/^@nedia-matrix\//] },
 });
-cpSync(join(desktop, "resources/native"), join(runtime, "native"), {
-  recursive: true,
-});
+cpSync(
+  join(desktop, "resources/native", `${process.platform}-${arch}`),
+  join(runtime, "native", `${process.platform}-${arch}`),
+  { recursive: true },
+);
 await build({
   configFile: false,
   root: here,
@@ -171,7 +179,7 @@ writeFileSync(
 );
 const version = "24.18.0";
 const platform = process.platform;
-const archiveName = `node-v${version}-${platform === "win32" ? "win" : platform}-${process.arch}`;
+const archiveName = `node-v${version}-${platform === "win32" ? "win" : platform}-${arch}`;
 const cache = join(root, ".local/tauri-node");
 const binary = platform === "win32" ? "node.exe" : "bin/node";
 const cachedNode = join(cache, archiveName, binary);
@@ -251,7 +259,7 @@ if (trust === "release") {
     { env: environment, stdio: "inherit" },
   );
   cpSync(
-    platform === "darwin" ? join(helper, process.arch) : helper,
+    platform === "darwin" ? join(helper, arch) : helper,
     join(runtime, "update-helper"),
     { recursive: true },
   );

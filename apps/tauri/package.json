@@ -1,7 +1,7 @@
 {
   "name": "@nedia-matrix/tauri",
   "private": true,
-  "version": "0.7.11",
+  "version": "0.7.12",
   "type": "module",
   "scripts": {
     "package": "node run.mjs package",

@@ -22,6 +22,16 @@ import {
 const here = import.meta.dirname;
 const root = resolve(here, "../..");
 const mode = process.argv[2];
+const arch = process.env.NEDIA_TARGET_ARCH ?? process.arch;
+if (
+  !["arm64", "x64"].includes(arch) ||
+  (arch !== process.arch && process.platform !== "darwin")
+)
+  throw new Error("Unsupported Tauri target architecture");
+const rustTarget =
+  mode === "package" && process.platform === "darwin"
+    ? `${arch === "arm64" ? "aarch64" : "x86_64"}-apple-darwin`
+    : undefined;
 if (!["dev", "package"].includes(mode))
   throw new Error("Expected dev or package");
 if (mode === "package" && !["darwin", "win32"].includes(process.platform))
@@ -52,7 +62,7 @@ const args =
         "tauri",
         "build",
         ...(process.platform === "darwin"
-          ? ["--bundles", "app"]
+          ? ["--bundles", "app", "--target", rustTarget]
           : ["--no-bundle"]),
         "--",
         "--locked",
@@ -64,12 +74,16 @@ execFileSync("pnpm", args, {
   shell: process.platform === "win32",
 });
 if (mode === "package") {
-  const bundle = resolve(here, "src-tauri/target/release/bundle");
+  const bundle = resolve(
+    here,
+    "src-tauri/target",
+    ...(rustTarget ? [rustTarget] : []),
+    "release/bundle",
+  );
   const output = join(here, "dist-installers");
   mkdirSync(output, { recursive: true });
   const targets = updateArtifactTargets(version, "tauri").filter(
-    (target) =>
-      target.platform === process.platform && target.arch === process.arch,
+    (target) => target.platform === process.platform && target.arch === arch,
   );
   if (!targets.length) throw new Error("Unsupported release target");
   const artifacts = [];

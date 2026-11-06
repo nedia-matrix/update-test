@@ -54,6 +54,8 @@ function run(args, distribution) {
   const environment = {
     ...process.env,
     NEDIA_UPDATE_DISTRIBUTION: distribution,
+    NEDIA_TARGET_PLATFORM: mode === "mac" ? "darwin" : "win32",
+    NEDIA_TARGET_ARCH: mode === "mac" ? process.arch : "x64",
   };
   // Packaging subprocesses never receive release credentials.
   delete environment.NEDIA_UPDATE_PRIVATE_KEY;
